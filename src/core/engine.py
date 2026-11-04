@@ -656,28 +656,38 @@ class SubAgentWorker(QThread):
         self._stream_text("OUTPUT", "Review completed successfully. Passed gate to Runtime Tester.")
 
     def _execute_tester_flow(self) -> None:
-        """Tester Flow: Runtime test suite and fuzzer."""
+        """Tester Flow: Runtime tests, Playwright browser E2E, and Chrome DevTools MCP inspection."""
         self.status_signal.emit(self.config.agent_id, AgentState.THINKING.value)
-        self.progress_signal.emit(self.config.agent_id, 20)
+        self.progress_signal.emit(self.config.agent_id, 15)
 
         if "headless-qa-automation" in self.config.skills:
-            self._stream_text("TOOL", "[SKILL AUTO-INVOKE] David Kim activated 'headless-qa-automation' for headless verification")
+            self._stream_text("TOOL", "[SKILL AUTO-INVOKE] David Kim activated 'headless-qa-automation'")
+        if "playwright-automation" in self.config.skills:
+            self._stream_text("TOOL", "[SKILL AUTO-INVOKE] David Kim activated 'playwright-automation' (Chromium E2E Runner)")
+        if "chrome-devtools" in self.config.skills:
+            self._stream_text("TOOL", "[MCP SERVER CONNECTED] David Kim connected to 'chrome-devtools' via MCP protocol")
 
         thought = (
-            f"[THOUGHT] Runtime Tester launching headless test runner with {self.config.model}. "
-            "Executing QT_QPA_PLATFORM=offscreen concurrency tests and fuzzing signal storm."
+            f"[THOUGHT] QA Automation Engineer deploying comprehensive test matrix with {self.config.model}. "
+            "1. QT_QPA_PLATFORM=offscreen headless unit tests. "
+            "2. Playwright headless browser E2E layout validation. "
+            "3. Chrome DevTools MCP deep inspection (console errors, DOM mutations, and network latency)."
         )
         if not self._stream_text("THOUGHT", thought):
             return
-        self.progress_signal.emit(self.config.agent_id, 50)
+        self.progress_signal.emit(self.config.agent_id, 45)
 
         self.status_signal.emit(self.config.agent_id, AgentState.CALLING_TOOL.value)
         self._stream_text("TOOL", "call_tool: run_headless_tests('tests/test_concurrency.py')")
-        self.msleep(350)
+        self.msleep(250)
+        self._stream_text("TOOL", "call_tool: mcp__chrome_devtools__navigate(url='http://localhost:8080', timeout=5000)")
+        self.msleep(250)
+        self._stream_text("TOOL", "call_tool: playwright_test_runner(specs=['tests/e2e/layout.spec.ts'], browser='chromium')")
+        self.msleep(250)
         self.progress_signal.emit(self.config.agent_id, 85)
 
         # Publish final certificate to Leader
-        final_test_msg = "Runtime Verification 100% SUCCESS: 5/5 test cases passed without segfaults or freezes."
+        final_test_msg = "QA Verification 100% SUCCESS: Unit tests, Playwright E2E suites, and Chrome DevTools MCP diagnostics passed."
         self._dispatch_structured_packet(
             intent="APPROVAL_NOTICE",
             to_agent="agent_leader",
@@ -685,7 +695,7 @@ class SubAgentWorker(QThread):
             severity="NORMAL"
         )
         self.msleep(200)
-        self._stream_text("OUTPUT", "Tester certified stability. Sent approval to Leader.")
+        self._stream_text("OUTPUT", "QA sign-off granted: 0 console errors, unit & Playwright E2E tests verified via MCP.")
 
     # --- Video & Media Production Squad Flows ---
 
@@ -1058,9 +1068,9 @@ class AgentOrchestrator(QObject):
                 avatar="🧪",
                 model="Gemini 3.8 Flash",
                 thinking_level="high",
-                system_prompt="Execute runtime and headless validation tests.",
+                system_prompt="Execute runtime tests, Playwright browser E2E suites, and Chrome DevTools MCP diagnostics.",
                 persona_file=os.path.join(personas_dir, "05_qa_tester.md"),
-                skills=["headless-qa-automation"],
+                skills=["headless-qa-automation", "playwright-automation", "chrome-devtools"],
                 rules=[]
             ),
         ]

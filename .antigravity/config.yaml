@@ -5,6 +5,15 @@ orchestration:
     name: "Lead Orchestrator"
     description: "Autonomous coordinator dynamically allocating reasoning budgets across specialist subagents."
 
+mcp:
+  servers:
+    chrome-devtools:
+      command: "npx"
+      args: ["-y", "@modelcontextprotocol/server-chrome-devtools"]
+    playwright:
+      command: "npx"
+      args: ["-y", "@executeautomation/playwright-mcp-server"]
+
 tools:
   - name: "dispatch_subtask"
     description: "Dispatches a subtask to a specialized agent with a specified dynamic reasoning budget."
@@ -17,7 +26,7 @@ tools:
       properties:
         target_agent:
           type: "string"
-          enum: ["gui_builder", "code_checker"]
+          enum: ["gui_builder", "code_checker", "qa_tester"]
           description: "The designated specialist subagent for the task."
         instruction:
           type: "string"
@@ -34,3 +43,13 @@ agents:
   code_checker:
     path: ".antigravity/agents/code_checker.md"
     default_thinking_level: "high"
+  qa_tester:
+    path: "personas/05_qa_tester.md"
+    default_thinking_level: "high"
+    mcp_servers:
+      - "chrome-devtools"
+      - "playwright"
+    skills:
+      - "headless-qa-automation"
+      - "playwright-automation"
+      - "chrome-devtools"

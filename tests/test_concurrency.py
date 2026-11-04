@@ -236,6 +236,11 @@ class TestHierarchicalArchitecture(unittest.TestCase):
         self.assertIn("pyqt-ui-builder", window.lbl_detail_skills.text())
         self.assertIn("01-architecture-boundaries.md", window.lbl_detail_rules.text())
 
+        # Verify Tester skills binding
+        window._select_detail_agent("agent_tester")
+        self.assertIn("playwright-automation", window.lbl_detail_skills.text())
+        self.assertIn("chrome-devtools", window.lbl_detail_skills.text())
+
         window.close()
         self.app.processEvents()
 
@@ -308,6 +313,49 @@ class TestHierarchicalArchitecture(unittest.TestCase):
 
         window.close()
         self.app.processEvents()
+
+    def test_08_tester_playwright_and_chrome_mcp(self) -> None:
+        """Verify Tester is equipped with Playwright and Chrome DevTools MCP tools."""
+        import json
+        orch = AgentOrchestrator()
+        dev_configs = orch.get_department_configs("dept_dev")
+        tester_cfg = next(c for c in dev_configs if c.agent_id == "agent_tester")
+
+        # 1. Verify skills in SubAgentConfig
+        self.assertIn("headless-qa-automation", tester_cfg.skills)
+        self.assertIn("playwright-automation", tester_cfg.skills)
+        self.assertIn("chrome-devtools", tester_cfg.skills)
+
+        # 2. Verify .agent/mcp.json configuration exists and has servers
+        mcp_path = os.path.join(CustomizationDiscovery.get_workspace_agent_dir(), "mcp.json")
+        self.assertTrue(os.path.exists(mcp_path))
+        with open(mcp_path, "r", encoding="utf-8") as f:
+            mcp_data = json.load(f)
+        self.assertIn("chrome-devtools", mcp_data.get("mcpServers", {}))
+        self.assertIn("playwright", mcp_data.get("mcpServers", {}))
+
+        # 3. Verify tester persona mentions Playwright and Chrome DevTools
+        persona_content = tester_cfg.load_persona()
+        self.assertIn("Playwright", persona_content)
+        self.assertIn("Chrome DevTools", persona_content)
+        self.assertIn("chrome-devtools", persona_content)
+
+        # 4. Verify worker execution emits Playwright & MCP telemetry
+        logger = HistoryLogger(base_dir="/tmp/test_agent_history")
+        worker = SubAgentWorker(tester_cfg, "Validate app with Playwright and Chrome DevTools", logger)
+        streams = []
+        worker.stream_signal.connect(lambda a, s, c: streams.append((s, c)))
+
+        worker.start()
+        while worker.isRunning():
+            self.app.processEvents()
+        self.assertTrue(worker.wait(3000))
+
+        stream_texts = " ".join([c for s, c in streams])
+        self.assertIn("playwright-automation", stream_texts)
+        self.assertIn("chrome-devtools", stream_texts)
+        self.assertIn("mcp__chrome_devtools", stream_texts)
+        self.assertIn("playwright_test_runner", stream_texts)
 
 
 if __name__ == "__main__":

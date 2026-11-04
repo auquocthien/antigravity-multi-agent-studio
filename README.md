@@ -14,7 +14,7 @@ The studio enables seamless dynamic switching between distinct organizational de
   - 💻 **Elena Rostova** (`Dev 1: UI & Layout`) — Responsive PyQt6 visual layout & status design.
   - 💻 **Marcus Chen** (`Dev 2: Core & Threads`) — Concurrency-safe worker threads, bus logging & agy CLI bridging.
   - 🛡️ **Dr. Sarah Jenkins** (`Code Reviewer`) — Boundary auditing, race condition prevention & strict gating.
-  - 🧪 **David Kim** (`Runtime Tester`) — Headless validation & test execution.
+  - 🧪 **David Kim** (`Runtime Tester`) — Headless QA, Playwright E2E browser automation & Chrome DevTools MCP diagnostics.
 - 🎬 **Video & Media Production Squad**:
   - 🎬 **Liam Parker** (`Creative Director`) — Video storyboards, scene decomposition & pacing architecture.
   - 🎨 **Chloe Bennett** (`Motion Graphics Dev`) — Remotion React compositions, spring physics & kinetic typography.
@@ -30,8 +30,9 @@ Every agent acts as a true professional employee with a dedicated Markdown profi
 
 ### 3. 🧩 Antigravity Customization Architecture (`.agent/` & Global)
 - Automatically discovers workspace rules (`01-architecture-boundaries.md`, `02-investigate-before-fix.md`, `03-peer-review-gating.md`) and global rules.
-- Integrates workspace & global skills (`concurrency-safe-engine`, `pyqt-ui-builder`, `remotion-create`, `remotion-render`, `banner-design`, etc.).
-- Agents autonomously reference and invoke designated skills and rule boundaries in their reasoning traces.
+- Integrates workspace & global skills (`headless-qa-automation`, `playwright-automation`, `concurrency-safe-engine`, `chrome-devtools`, `pyqt-ui-builder`, `remotion-create`, etc.).
+- Configures workspace MCP servers (`.agent/mcp.json`) for Chrome DevTools and Playwright automation.
+- Agents autonomously reference and invoke designated skills, MCP tools, and rule boundaries in their reasoning traces.
 
 ### 4. 🎨 UI/UX Pro Max Architecture
 - **Tab 1: Pipeline Flow (Horizontal)** — Left-to-right vector line connectors (fork, parallel, peer-review gating, join, straight line) with smooth glassmorphism cards.
@@ -78,16 +79,17 @@ bash build_linux.sh
 
 ```
 antigravity-multi-agent-studio/
-├── .agent/                    # Workspace-level Rules & Skills
+├── .agent/                    # Workspace-level Rules, Skills & MCP
 │   ├── rules/                 # Boundary & gating guidelines
-│   └── skills/                # Domain-specific automation skills
+│   ├── skills/                # Domain-specific automation skills (playwright, pyqt, concurrency)
+│   └── mcp.json               # MCP server configuration (Chrome DevTools & Playwright)
 ├── assets/                    # Application icons & visual resources
 ├── personas/                  # 10 Professional Employee Persona Markdown Profiles
 │   ├── 01_leader_architect.md
 │   ├── 02_dev_frontend.md
 │   ├── 03_dev_backend.md
 │   ├── 04_code_reviewer.md
-│   ├── 05_runtime_tester.md
+│   ├── 05_qa_tester.md
 │   ├── 06_creative_director.md
 │   ├── 07_motion_graphics_dev.md
 │   ├── 08_audio_captions_dev.md
@@ -101,7 +103,7 @@ antigravity-multi-agent-studio/
 │   │   └── tree_node.py       # Compact vector node cards
 │   └── main.py                # Desktop entrypoint
 ├── tests/
-│   └── test_concurrency.py    # 7 headless unit tests
+│   └── test_concurrency.py    # 8 headless unit tests
 ├── build_linux.sh             # Standalone ELF packaging script
 ├── requirements.txt           # Python dependencies (PyQt6, etc.)
 └── README.md
