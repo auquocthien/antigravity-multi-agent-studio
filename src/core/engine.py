@@ -14,17 +14,17 @@ from PyQt6.QtCore import QObject, QThread, pyqtSignal, QMutex, QWaitCondition
 
 class AgentRole(Enum):
     # Software Engineering Squad Roles
-    LEADER = "Orchestrator & Architect"
-    DEV_UI = "Developer 1: UI & Frontend"
-    DEV_CORE = "Developer 2: Core & Concurrency"
-    REVIEWER = "Code Reviewer & Auditor"
-    TESTER = "Runtime Tester & QA"
+    LEADER = "Lead Architect"
+    DEV_UI = "Frontend Dev"
+    DEV_CORE = "Backend Dev"
+    REVIEWER = "Code Reviewer"
+    TESTER = "QA Tester"
     # Video & Media Production Squad Roles
-    DIRECTOR = "Creative Director & Storyboard Architect"
-    DEV_MOTION = "Motion Graphics & Remotion Dev"
-    DEV_AUDIO = "Audio, TTS & Caption Engineer"
-    VIDEO_REVIEWER = "Video Quality & Compliance Auditor"
-    RENDER_QA = "Remotion Render & Encoding QA"
+    DIRECTOR = "Creative Director"
+    DEV_MOTION = "Motion Dev"
+    DEV_AUDIO = "Audio & Captions"
+    VIDEO_REVIEWER = "Video Auditor"
+    RENDER_QA = "Render QA"
 
 
 class DepartmentConfig:
@@ -893,17 +893,17 @@ class AgentOrchestrator(QObject):
         self.departments: Dict[str, DepartmentConfig] = {
             "dept_dev": DepartmentConfig(
                 dept_id="dept_dev",
-                name="Software Engineering Squad",
+                name="Dev Squad",
                 icon="💻",
-                default_prompt="Implement Linux desktop utility with peer-review gating and runtime test verification",
-                description="5-agent engineering squad specializing in desktop UI, concurrency, and QA."
+                default_prompt="Implement Linux desktop utility with peer-review and runtime tests",
+                description="Desktop App & Concurrency"
             ),
             "dept_video": DepartmentConfig(
                 dept_id="dept_video",
-                name="Video & Media Production Squad",
+                name="Video Squad",
                 icon="🎬",
-                default_prompt="Create 60s product showcase video with animated typography, voiceover cues, and Remotion composition",
-                description="5-agent creative video studio specializing in Remotion, kinetic motion, and automated rendering."
+                default_prompt="Create 60s product showcase video with typography, voiceover, and Remotion",
+                description="Remotion & Motion Graphics"
             ),
         }
         self.active_department_id: str = "dept_dev"

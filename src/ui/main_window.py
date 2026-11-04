@@ -407,7 +407,7 @@ class MainWindow(QMainWindow):
         dept_layout.setContentsMargins(12, 6, 12, 6)
         dept_layout.setSpacing(10)
 
-        lbl_dept_title = QLabel("🏢 <b>Department / Squad:</b>")
+        lbl_dept_title = QLabel("🏢 <b>Squad:</b>")
         lbl_dept_title.setStyleSheet("font-size: 13px; color: #F9FAFB;")
         dept_layout.addWidget(lbl_dept_title)
 
@@ -422,7 +422,7 @@ class MainWindow(QMainWindow):
                 padding: 3px 12px;
                 font-weight: 700;
                 font-size: 12px;
-                min-width: 280px;
+                min-width: 220px;
             }
             QComboBox::drop-down {
                 border: none;
@@ -452,22 +452,22 @@ class MainWindow(QMainWindow):
         # --- Tab 1: Horizontal Pipeline Overview ---
         tab_pipeline = QWidget()
         self._setup_tab_pipeline(tab_pipeline)
-        self.tabs.addTab(tab_pipeline, "🌐 Pipeline Flow (Horizontal)")
+        self.tabs.addTab(tab_pipeline, "🌐 Pipeline")
 
         # --- Tab 2: Agent Detail View ---
         tab_detail = QWidget()
         self._setup_tab_detail(tab_detail)
-        self.tabs.addTab(tab_detail, "🔍 Agent Details (Live View)")
+        self.tabs.addTab(tab_detail, "🔍 Inspector")
 
         # --- Tab 3: Configuration Page ---
         tab_config = QWidget()
         self._setup_tab_config(tab_config)
-        self.tabs.addTab(tab_config, "⚙️ Settings & Configuration")
+        self.tabs.addTab(tab_config, "⚙️ Settings")
 
         # Status Bar
         self.status_bar = QStatusBar()
         self.setStatusBar(self.status_bar)
-        self.lbl_status = QLabel("Ready. Click '🚀 Run Pipeline' to start agents.")
+        self.lbl_status = QLabel("Ready.")
         self.status_bar.addWidget(self.lbl_status)
 
     def _setup_tab_pipeline(self, parent: QWidget) -> None:
@@ -491,7 +491,7 @@ class MainWindow(QMainWindow):
         ctrl_bar.setContentsMargins(10, 8, 10, 8)
         ctrl_bar.setSpacing(10)
 
-        self.btn_dispatch = QPushButton("🚀 Run Pipeline")
+        self.btn_dispatch = QPushButton("🚀 Run")
         self.btn_dispatch.setObjectName("btn_dispatch")
         self.btn_dispatch.setFixedHeight(32)
         self.btn_dispatch.clicked.connect(self._handle_dispatch)
@@ -512,7 +512,7 @@ class MainWindow(QMainWindow):
         ctrl_bar.addWidget(self.btn_stop)
 
         ctrl_bar.addSpacing(12)
-        self.lbl_active_prompt = QLabel("Mission: <i>Build Linux desktop utility with peer-review and test...</i>")
+        self.lbl_active_prompt = QLabel("Mission: Linux desktop utility")
         self.lbl_active_prompt.setStyleSheet("""
             color: #E2E8F0;
             font-size: 12px;
@@ -523,7 +523,7 @@ class MainWindow(QMainWindow):
         """)
         ctrl_bar.addWidget(self.lbl_active_prompt, stretch=1)
 
-        self.btn_mode_toggle = QPushButton("🧪 Mode: Simulation")
+        self.btn_mode_toggle = QPushButton("🧪 Simulation")
         self.btn_mode_toggle.setFixedHeight(32)
         self.btn_mode_toggle.setStyleSheet("""
             QPushButton {
@@ -543,7 +543,7 @@ class MainWindow(QMainWindow):
         self.btn_mode_toggle.clicked.connect(self._toggle_execution_mode)
         ctrl_bar.addWidget(self.btn_mode_toggle)
 
-        btn_go_config = QPushButton("⚙️ Configure")
+        btn_go_config = QPushButton("⚙️ Settings")
         btn_go_config.setFixedHeight(32)
         btn_go_config.clicked.connect(lambda: self.tabs.setCurrentIndex(2))
         ctrl_bar.addWidget(btn_go_config)
@@ -589,7 +589,7 @@ class MainWindow(QMainWindow):
         self.pipeline_slots.append(slot_1)
         self.node_widgets[self.configs[1].agent_id] = slot_1
 
-        lbl_peer = QLabel("Peer Review Gating")
+        lbl_peer = QLabel("Peer Review")
         lbl_peer.setFixedHeight(24)
         lbl_peer.setAlignment(Qt.AlignmentFlag.AlignCenter)
         lbl_peer.setStyleSheet("""
@@ -637,7 +637,7 @@ class MainWindow(QMainWindow):
         splitter.addWidget(h_scroll)
 
         # Message Bus Group
-        bus_group = QGroupBox("Inter-Agent Communication (Standardized Message Bus)")
+        bus_group = QGroupBox("📡 Message Bus")
         bus_layout = QVBoxLayout(bus_group)
         bus_layout.setContentsMargins(10, 10, 10, 10)
         bus_layout.setSpacing(6)
@@ -645,7 +645,7 @@ class MainWindow(QMainWindow):
         self.bus_terminal = QTextEdit()
         self.bus_terminal.setObjectName("bus_terminal")
         self.bus_terminal.setReadOnly(True)
-        self.bus_terminal.setPlaceholderText("Antigravity CLI communication packets will appear here in real-time...")
+        self.bus_terminal.setPlaceholderText("Communication stream...")
         bus_layout.addWidget(self.bus_terminal)
 
         splitter.addWidget(bus_group)
@@ -661,7 +661,7 @@ class MainWindow(QMainWindow):
         layout.setSpacing(12)
 
         # Left Column: Agent selector buttons
-        selector_group = QGroupBox("Agent Roster")
+        selector_group = QGroupBox("Roster")
         selector_layout = QVBoxLayout(selector_group)
         selector_layout.setContentsMargins(10, 12, 10, 10)
         selector_layout.setSpacing(6)
@@ -701,7 +701,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(selector_group, stretch=1)
 
         # Right Column: Detail View for Selected Agent
-        detail_group = QGroupBox("Detailed Live Inspector")
+        detail_group = QGroupBox("Live Inspector")
         detail_vbox = QVBoxLayout(detail_group)
         detail_vbox.setContentsMargins(12, 12, 12, 12)
         detail_vbox.setSpacing(8)
@@ -721,7 +721,7 @@ class MainWindow(QMainWindow):
         title_vbox.setSpacing(2)
         self.lbl_detail_title = QLabel("Leader / Architect")
         self.lbl_detail_title.setStyleSheet("font-size: 15px; font-weight: 700; color: #F9FAFB;")
-        self.lbl_detail_role = QLabel("Orchestrator & Task Decomposition")
+        self.lbl_detail_role = QLabel("Lead Architect")
         self.lbl_detail_role.setStyleSheet("font-size: 11px; color: #9CA3AF;")
         title_vbox.addWidget(self.lbl_detail_title)
         title_vbox.addWidget(self.lbl_detail_role)
@@ -739,7 +739,7 @@ class MainWindow(QMainWindow):
 
         info_bar.addStretch()
 
-        self.lbl_detail_params = QLabel("Model: Gemini 3.1 Pro · Effort: HIGH")
+        self.lbl_detail_params = QLabel("Gemini 3.1 Pro · High")
         self.lbl_detail_params.setStyleSheet("""
             font-size: 11px;
             color: #38BDF8;
@@ -751,12 +751,12 @@ class MainWindow(QMainWindow):
         """)
         info_bar.addWidget(self.lbl_detail_params)
 
-        btn_view_persona = QPushButton("📜 Profile & Rules")
+        btn_view_persona = QPushButton("📜 Persona")
         btn_view_persona.setFixedHeight(28)
         btn_view_persona.clicked.connect(lambda: self._edit_persona(self.current_detail_agent_id))
         info_bar.addWidget(btn_view_persona)
 
-        btn_clear_detail = QPushButton("Clear Log")
+        btn_clear_detail = QPushButton("Clear")
         btn_clear_detail.setFixedHeight(28)
         btn_clear_detail.clicked.connect(self._clear_active_detail_log)
         info_bar.addWidget(btn_clear_detail)
@@ -785,7 +785,7 @@ class MainWindow(QMainWindow):
         layout.setSpacing(12)
 
         # Customization Architecture Status Box
-        custom_group = QGroupBox("Antigravity Customization Architecture (.agent & Global)")
+        custom_group = QGroupBox("Customizations (.agent & Global)")
         custom_layout = QHBoxLayout(custom_group)
         custom_layout.setContentsMargins(12, 10, 12, 10)
         custom_layout.setSpacing(14)
@@ -794,20 +794,20 @@ class MainWindow(QMainWindow):
         skills_discovered = CustomizationDiscovery.discover_skills()
 
         lbl_ws_status = QLabel(
-            f"<b>📁 Workspace .agent/:</b> {len(rules_discovered['workspace'])} Rules · {len(skills_discovered['workspace'])} Skills (Active)"
+            f"<b>📁 Workspace:</b> {len(rules_discovered['workspace'])} Rules · {len(skills_discovered['workspace'])} Skills"
         )
         lbl_ws_status.setStyleSheet("color: #38BDF8; font-size: 12px;")
         custom_layout.addWidget(lbl_ws_status)
 
         lbl_gl_status = QLabel(
-            f"<b>🌐 Global ~/.gemini/config/:</b> {len(rules_discovered['global'])} Rules · {len(skills_discovered['global'])} Skills"
+            f"<b>🌐 Global:</b> {len(rules_discovered['global'])} Rules · {len(skills_discovered['global'])} Skills"
         )
         lbl_gl_status.setStyleSheet("color: #9CA3AF; font-size: 12px;")
         custom_layout.addWidget(lbl_gl_status)
 
         custom_layout.addStretch()
 
-        btn_open_agent = QPushButton("📂 Open .agent Folder")
+        btn_open_agent = QPushButton("📂 Open .agent")
         btn_open_agent.setFixedHeight(28)
         btn_open_agent.clicked.connect(self._open_agent_folder)
         custom_layout.addWidget(btn_open_agent)
@@ -815,7 +815,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(custom_group)
 
         # Mission Prompt Box
-        prompt_group = QGroupBox("Target Mission Prompt")
+        prompt_group = QGroupBox("Mission Prompt")
         prompt_vbox = QVBoxLayout(prompt_group)
         prompt_vbox.setContentsMargins(12, 12, 12, 12)
         prompt_vbox.setSpacing(6)
@@ -826,13 +826,13 @@ class MainWindow(QMainWindow):
         layout.addWidget(prompt_group)
 
         # Agent Configuration Matrix Box
-        matrix_group = QGroupBox("Agent Configuration Matrix (Model & Reasoning Budget)")
+        matrix_group = QGroupBox("Agent Matrix")
         matrix_layout = QGridLayout(matrix_group)
         matrix_layout.setContentsMargins(14, 14, 14, 14)
         matrix_layout.setSpacing(12)
 
         # Headers
-        headers = ["Agent / Role", "Live Antigravity Model", "Reasoning Budget", "Employee Persona Profile (.md)"]
+        headers = ["Agent", "Model", "Budget", "Persona (.md)"]
         for col, h in enumerate(headers):
             lbl_h = QLabel(h)
             lbl_h.setStyleSheet("font-weight: 700; color: #38BDF8; font-size: 11px; padding-bottom: 4px; border-bottom: 1px solid #1F2937;")
@@ -921,13 +921,13 @@ class MainWindow(QMainWindow):
 
         # History and Action Buttons
         btn_box = QHBoxLayout()
-        btn_apply = QPushButton("💾 Apply Configuration & Return to Flow")
+        btn_apply = QPushButton("💾 Apply & Back")
         btn_apply.setObjectName("btn_dispatch")
         btn_apply.setFixedHeight(34)
         btn_apply.clicked.connect(self._apply_config_and_return)
         btn_box.addWidget(btn_apply)
 
-        btn_hist = QPushButton("📁 Open History Directory (.jsonl)")
+        btn_hist = QPushButton("📁 History")
         btn_hist.setFixedHeight(34)
         btn_hist.clicked.connect(self._open_history_folder)
         btn_box.addWidget(btn_hist)
@@ -989,7 +989,7 @@ class MainWindow(QMainWindow):
 
         # Update Mission Prompt
         self.edit_prompt.setText(dept.default_prompt)
-        self.lbl_active_prompt.setText(f"Mission: <i>{dept.default_prompt[:65]}...</i>")
+        self.lbl_active_prompt.setText(f"Mission: {dept.default_prompt[:45]}...")
 
         # Rebind Tab 1 Pipeline Slots
         self.node_widgets.clear()
@@ -1016,7 +1016,7 @@ class MainWindow(QMainWindow):
         # Rebind Tab 3 Configuration Matrix
         self._rebind_tab_config()
 
-        self.lbl_status.setText(f"Switched department to: {dept.name} ({len(self.configs)} active agents)")
+        self.lbl_status.setText(f"Active Squad: {dept.name}")
 
     def _select_inspector_slot(self, slot_idx: int) -> None:
         if 0 <= slot_idx < len(self.configs):
@@ -1052,7 +1052,7 @@ class MainWindow(QMainWindow):
             if agent_id in self.config_personas:
                 self.config_personas[agent_id].setText(f"📄 {os.path.basename(file_path)}")
                 self.config_personas[agent_id].setToolTip(file_path)
-            self.lbl_status.setText(f"Loaded employee persona profile for {cfg.name}: {os.path.basename(file_path)}")
+            self.lbl_status.setText(f"Loaded persona for {cfg.name}")
 
     def _edit_persona(self, agent_id: str) -> None:
         """Open in-app Markdown dialog to edit and update employee persona prompt."""
@@ -1065,7 +1065,7 @@ class MainWindow(QMainWindow):
                 self.config_personas[agent_id].setText(f"📄 {os.path.basename(cfg.persona_file) if cfg.persona_file else 'Custom'}")
                 if cfg.persona_file:
                     self.config_personas[agent_id].setToolTip(cfg.persona_file)
-            self.lbl_status.setText(f"Updated persona instructions for {cfg.name}")
+            self.lbl_status.setText(f"Updated persona for {cfg.name}")
 
     def _sync_config(self, agent_id: str) -> None:
         """Sync updated model or thinking from config tab into node card and engine."""
@@ -1084,7 +1084,7 @@ class MainWindow(QMainWindow):
 
     def _apply_config_and_return(self) -> None:
         prompt_text = self.edit_prompt.text().strip()
-        self.lbl_active_prompt.setText(f"Mission: <i>{prompt_text[:65]}...</i>")
+        self.lbl_active_prompt.setText(f"Mission: {prompt_text[:45]}...")
         self.tabs.setCurrentIndex(0)
 
     def _open_agent_detail(self, agent_id: str) -> None:
@@ -1100,9 +1100,11 @@ class MainWindow(QMainWindow):
             self.lbl_detail_avatar.setText(cfg.avatar)
             self.lbl_detail_title.setText(cfg.name)
             self.lbl_detail_role.setText(cfg.role.value)
-            self.lbl_detail_params.setText(f"Model: {cfg.model} · Effort: {cfg.thinking_level.upper()}")
-            skills_str = ", ".join(cfg.skills) if cfg.skills else "General Procedures"
-            rules_str = ", ".join(cfg.rules) if cfg.rules else "Standard Guidelines"
+            effort_tag = cfg.thinking_level.capitalize()
+            model_short = cfg.model.split("(")[0].strip()
+            self.lbl_detail_params.setText(f"{model_short} · {effort_tag}")
+            skills_str = ", ".join(cfg.skills) if cfg.skills else "Standard"
+            rules_str = ", ".join(cfg.rules) if cfg.rules else "Standard"
             self.lbl_detail_skills.setText(f"Skills: [{skills_str}]")
             self.lbl_detail_rules.setText(f"Rules: [{rules_str}]")
 
@@ -1176,7 +1178,7 @@ class MainWindow(QMainWindow):
         self.btn_stop.setEnabled(True)
         self._is_paused = False
 
-        self.lbl_status.setText("Pipeline executing (Stage 1: Leader / Architect)...")
+        self.lbl_status.setText("Running: Stage 1 (Architect)...")
         self.orchestrator.dispatch_hierarchical_pipeline(prompt)
 
     def _handle_pause(self) -> None:
@@ -1270,7 +1272,7 @@ class MainWindow(QMainWindow):
         """Switch between Simulation mode and Live CLI mode."""
         if self.orchestrator.execution_mode == "simulation":
             self.orchestrator.set_execution_mode("live_cli")
-            self.btn_mode_toggle.setText("⚡ Mode: Live CLI")
+            self.btn_mode_toggle.setText("⚡ Live CLI")
             self.btn_mode_toggle.setStyleSheet("""
                 QPushButton {
                     background-color: #7C3AED;
@@ -1285,10 +1287,10 @@ class MainWindow(QMainWindow):
                     background-color: #6D28D9;
                 }
             """)
-            self.lbl_status.setText("Execution mode set to: Live Antigravity CLI (Real process streaming)")
+            self.lbl_status.setText("Mode: Live CLI")
         else:
             self.orchestrator.set_execution_mode("simulation")
-            self.btn_mode_toggle.setText("🧪 Mode: Simulation")
+            self.btn_mode_toggle.setText("🧪 Simulation")
             self.btn_mode_toggle.setStyleSheet("""
                 QPushButton {
                     background-color: #1E293B;
@@ -1304,7 +1306,7 @@ class MainWindow(QMainWindow):
                     color: #FFFFFF;
                 }
             """)
-            self.lbl_status.setText("Execution mode set to: Timed Demo Simulation")
+            self.lbl_status.setText("Mode: Simulation")
 
     def _open_agent_folder(self) -> None:
         """Open the .agent directory in Linux file manager."""
