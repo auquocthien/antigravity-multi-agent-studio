@@ -1,0 +1,13 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Multi-Agent Observer
+GenericName=Multi-Agent Orchestrator Studio
+Comment=Real-Time Multi-Agent Orchestration & Observability Studio with PyQt6
+Exec=/mnt/data/linux-desktop-utility/dist/linux-utility
+Icon=/mnt/data/linux-desktop-utility/assets/app.svg
+Terminal=false
+Categories=Development;Utility;System;
+StartupNotify=true
+StartupWMClass=LinuxNativeUtility
+Keywords=agent;orchestrator;multi-agent;observer;stream;pyqt;

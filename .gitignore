@@ -1,0 +1,21 @@
+# Virtual Environment
+.venv/
+venv/
+ENV/
+
+# Build & PyInstaller Artifacts
+build/
+dist/
+*.spec
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Runtime History & Logs
+history/*.jsonl
+*.log
+
+# Cache & OS Files
+.cache/
+.DS_Store
+*.swp

@@ -1,0 +1,36 @@
+version: "1.0"
+orchestration:
+  pipeline: "multi-agent-linux-desktop"
+  lead_orchestrator:
+    name: "Lead Orchestrator"
+    description: "Autonomous coordinator dynamically allocating reasoning budgets across specialist subagents."
+
+tools:
+  - name: "dispatch_subtask"
+    description: "Dispatches a subtask to a specialized agent with a specified dynamic reasoning budget."
+    parameters:
+      type: "object"
+      required:
+        - "target_agent"
+        - "instruction"
+        - "thinking_level"
+      properties:
+        target_agent:
+          type: "string"
+          enum: ["gui_builder", "code_checker"]
+          description: "The designated specialist subagent for the task."
+        instruction:
+          type: "string"
+          description: "Detailed actionable instructions for the target agent."
+        thinking_level:
+          type: "string"
+          enum: ["low", "medium", "high"]
+          description: "Dynamic reasoning budget assigned to the subagent to balance latency and cognitive rigor."
+
+agents:
+  gui_builder:
+    path: ".antigravity/agents/gui_builder.md"
+    default_thinking_level: "medium"
+  code_checker:
+    path: ".antigravity/agents/code_checker.md"
+    default_thinking_level: "high"
