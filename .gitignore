@@ -19,3 +19,7 @@ history/*.jsonl
 .cache/
 .DS_Store
 *.swp
+
+# Generated Session Reports
+reports/qa_report_*_*.md
+

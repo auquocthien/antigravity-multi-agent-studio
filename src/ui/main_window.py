@@ -2,10 +2,11 @@
 
 import os
 import subprocess
-from typing import Dict, List
+from typing import Dict, List, Optional
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QCloseEvent, QTextCursor, QPainter, QPen, QColor
 from PyQt6.QtWidgets import (
+    QApplication,
     QMainWindow,
     QWidget,
     QDialog,
@@ -17,6 +18,7 @@ from PyQt6.QtWidgets import (
     QLineEdit,
     QPushButton,
     QTextEdit,
+    QTextBrowser,
     QSplitter,
     QGroupBox,
     QStatusBar,
@@ -27,6 +29,7 @@ from PyQt6.QtWidgets import (
 )
 
 from src.core.engine import AgentOrchestrator, StandardMessagePacket, SubAgentConfig, AgyCliBridge, CustomizationDiscovery
+from src.core.report_generator import QAReportGenerator
 from src.ui.tree_node import CompactAgentNodeWidget
 
 
@@ -186,6 +189,139 @@ class PersonaEditorDialog(QDialog):
         self.accept()
 
 
+class QAReportDialog(QDialog):
+    """Modal dialog displaying the human-readable QA and stability certification report."""
+
+    def __init__(self, report_markdown: str, report_html: str, file_path: str = "", parent=None) -> None:
+        super().__init__(parent)
+        self.report_markdown = report_markdown
+        self.report_html = report_html
+        self.file_path = file_path
+        self.setWindowTitle("🛡️ QA Verification & Stability Certification Report")
+        self.resize(880, 680)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(12)
+
+        # Header bar
+        header = QHBoxLayout()
+        lbl_icon = QLabel("🛡️")
+        lbl_icon.setStyleSheet("font-size: 28px;")
+        header.addWidget(lbl_icon)
+
+        title_box = QVBoxLayout()
+        title_box.setSpacing(2)
+        lbl_title = QLabel("<b>QA Verification & Stability Report</b> · Audit Sign-off Certificate")
+        lbl_title.setStyleSheet("font-size: 14px; font-weight: bold; color: #F9FAFB;")
+        self.lbl_path = QLabel(f"File: {self.file_path or 'In-Memory Report'}")
+        self.lbl_path.setStyleSheet("font-size: 11px; color: #94A3B8; font-family: 'JetBrains Mono', monospace;")
+        title_box.addWidget(lbl_title)
+        title_box.addWidget(self.lbl_path)
+        header.addLayout(title_box)
+        header.addStretch()
+
+        # Badge
+        badge = QLabel("VERIFIED 100% PASS")
+        badge.setStyleSheet("""
+            background-color: #064E3B;
+            color: #34D399;
+            border: 1px solid #059669;
+            border-radius: 6px;
+            font-weight: bold;
+            font-size: 11px;
+            padding: 4px 10px;
+        """)
+        header.addWidget(badge)
+        layout.addLayout(header)
+
+        # Content Viewer (QTextBrowser for styled HTML preview)
+        self.viewer = QTextBrowser()
+        self.viewer.setOpenExternalLinks(True)
+        self.viewer.setStyleSheet("""
+            QTextBrowser {
+                background-color: #0B0F19;
+                color: #F8FAFC;
+                border: 1px solid #1E293B;
+                border-radius: 8px;
+                padding: 12px;
+            }
+        """)
+        self.viewer.setHtml(self.report_html)
+        layout.addWidget(self.viewer)
+
+        # Action Buttons
+        btn_bar = QHBoxLayout()
+
+        self.btn_toggle_view = QPushButton("🔄 Raw Markdown")
+        self.btn_toggle_view.setStyleSheet("""
+            QPushButton {
+                background-color: #1E293B;
+                color: #38BDF8;
+                border: 1px solid #0284C7;
+                border-radius: 6px;
+                padding: 6px 14px;
+                font-weight: 600;
+            }
+            QPushButton:hover {
+                background-color: #0F172A;
+            }
+        """)
+        self.btn_toggle_view.clicked.connect(self._toggle_view_mode)
+        btn_bar.addWidget(self.btn_toggle_view)
+        self.is_raw_view = False
+
+        btn_copy = QPushButton("📋 Copy Markdown")
+        btn_copy.setStyleSheet("""
+            QPushButton {
+                background-color: #1F2937;
+                color: #F3F4F6;
+                border: 1px solid #374151;
+                border-radius: 6px;
+                padding: 6px 14px;
+                font-weight: 600;
+            }
+            QPushButton:hover {
+                background-color: #374151;
+            }
+        """)
+        btn_copy.clicked.connect(self._copy_markdown)
+        btn_bar.addWidget(btn_copy)
+
+        btn_bar.addStretch()
+
+        btn_close = QPushButton("Close")
+        btn_close.setStyleSheet("""
+            QPushButton {
+                background-color: #10B981;
+                color: #0B0F19;
+                font-weight: 700;
+                border-radius: 6px;
+                padding: 6px 18px;
+            }
+            QPushButton:hover {
+                background-color: #059669;
+            }
+        """)
+        btn_close.clicked.connect(self.accept)
+        btn_bar.addWidget(btn_close)
+
+        layout.addLayout(btn_bar)
+
+    def _toggle_view_mode(self) -> None:
+        if not self.is_raw_view:
+            self.viewer.setPlainText(self.report_markdown)
+            self.btn_toggle_view.setText("🔄 Formatted View")
+            self.is_raw_view = True
+        else:
+            self.viewer.setHtml(self.report_html)
+            self.btn_toggle_view.setText("🔄 Raw Markdown")
+            self.is_raw_view = False
+
+    def _copy_markdown(self) -> None:
+        clipboard = QApplication.clipboard()
+        if clipboard:
+            clipboard.setText(self.report_markdown)
 
 
 TAB_THEME_QSS = """
@@ -365,14 +501,14 @@ THINKING_LEVELS = [
 class MainWindow(QMainWindow):
     """Refactored Multi-Agent Studio with Horizontal Pipeline, Detail Inspector, and Config Tab."""
 
-    def __init__(self) -> None:
+    def __init__(self, orchestrator: Optional[AgentOrchestrator] = None) -> None:
         super().__init__()
         self.setWindowTitle("Multi-Agent Real-Time Studio - Horizontal Pipeline & Inspector")
         self.resize(1260, 780)
         self.setMinimumSize(1020, 640)
 
         self.available_models: List[str] = AVAILABLE_MODELS
-        self.orchestrator = AgentOrchestrator(self)
+        self.orchestrator = orchestrator if orchestrator is not None else AgentOrchestrator(self)
         self.node_widgets: Dict[str, CompactAgentNodeWidget] = {}
         self.pipeline_slots: List[CompactAgentNodeWidget] = []
         self.detail_terminals: Dict[str, QTextEdit] = {}
@@ -542,6 +678,34 @@ class MainWindow(QMainWindow):
         """)
         self.btn_mode_toggle.clicked.connect(self._toggle_execution_mode)
         ctrl_bar.addWidget(self.btn_mode_toggle)
+
+        has_existing_report = os.path.exists(os.path.join(QAReportGenerator.get_reports_dir(), "qa_report_latest.md"))
+        self.btn_view_report = QPushButton("📄 QA Report Ready" if has_existing_report else "📄 View QA Report")
+        self.btn_view_report.setFixedHeight(32)
+        self.btn_view_report.setObjectName("btn_view_report")
+        self.btn_view_report.setStyleSheet("""
+            QPushButton#btn_view_report {
+                background-color: #065F46;
+                color: #A7F3D0;
+                border: 1px solid #10B981;
+                border-radius: 6px;
+                padding: 0 12px;
+                font-weight: 700;
+                font-size: 11px;
+            }
+            QPushButton#btn_view_report:hover {
+                background-color: #047857;
+                color: #FFFFFF;
+            }
+            QPushButton#btn_view_report:disabled {
+                background-color: #1F2937;
+                color: #6B7280;
+                border: 1px solid #374151;
+            }
+        """)
+        self.btn_view_report.setEnabled(has_existing_report)
+        self.btn_view_report.clicked.connect(self._show_qa_report_dialog)
+        ctrl_bar.addWidget(self.btn_view_report)
 
         btn_go_config = QPushButton("⚙️ Settings")
         btn_go_config.setFixedHeight(32)
@@ -1158,6 +1322,7 @@ class MainWindow(QMainWindow):
         self.orchestrator.message_bus_forwarded.connect(self._on_message_packet)
         self.orchestrator.pipeline_finished.connect(self._on_pipeline_finished)
         self.orchestrator.subordinate_adjusted.connect(self._on_subordinate_adjusted)
+        self.orchestrator.qa_report_ready.connect(self._on_qa_report_ready)
 
     def _handle_dispatch(self) -> None:
         prompt = self.edit_prompt.text().strip()
@@ -1318,6 +1483,63 @@ class MainWindow(QMainWindow):
         hist_dir = self.orchestrator.logger.base_dir
         if os.path.exists(hist_dir):
             subprocess.Popen(["xdg-open", hist_dir], start_new_session=True)
+
+    def _on_qa_report_ready(self, dept_id: str, report_path: str, markdown_content: str) -> None:
+        """Handle incoming QA report certificate and enable view button."""
+        self.btn_view_report.setEnabled(True)
+        self.btn_view_report.setText("📄 QA Report Ready")
+        self.btn_view_report.setStyleSheet("""
+            QPushButton#btn_view_report {
+                background-color: #059669;
+                color: #FFFFFF;
+                border: 2px solid #34D399;
+                border-radius: 6px;
+                padding: 0 12px;
+                font-weight: 700;
+                font-size: 11px;
+            }
+            QPushButton#btn_view_report:hover {
+                background-color: #047857;
+            }
+        """)
+        self.lbl_status.setText(f"QA Certificate: {os.path.basename(report_path)}")
+
+    def _show_qa_report_dialog(self) -> None:
+        """Opens modal QA Verification Report Dialog."""
+        reports_dir = QAReportGenerator.get_reports_dir()
+        latest_file = os.path.join(reports_dir, "qa_report_latest.md")
+
+        markdown_text = ""
+        file_path = latest_file
+        if self.orchestrator.latest_report_data:
+            markdown_text = self.orchestrator.latest_report_data.get("markdown", "")
+            file_path = self.orchestrator.latest_report_data.get("file_path", latest_file)
+        elif os.path.exists(latest_file):
+            try:
+                with open(latest_file, "r", encoding="utf-8") as f:
+                    markdown_text = f.read()
+            except OSError:
+                pass
+
+        if not markdown_text:
+            # Baseline report if none has executed yet
+            dept = self.orchestrator.get_active_department()
+            if dept.dept_id == "dept_video":
+                data = QAReportGenerator.generate_video_report(
+                    task_prompt=self.lbl_active_prompt.text(),
+                    model="Gemini 3.8 Flash"
+                )
+            else:
+                data = QAReportGenerator.generate_dev_report(
+                    task_prompt=self.lbl_active_prompt.text(),
+                    model="Gemini 3.8 Flash"
+                )
+            markdown_text = data["markdown"]
+            file_path = data["file_path"]
+
+        html_text = QAReportGenerator.markdown_to_html(markdown_text)
+        dialog = QAReportDialog(markdown_text, html_text, file_path, self)
+        dialog.exec()
 
     def closeEvent(self, event: QCloseEvent) -> None:
         self.orchestrator.stop_all()

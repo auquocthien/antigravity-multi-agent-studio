@@ -34,7 +34,19 @@ Every agent acts as a true professional employee with a dedicated Markdown profi
 - Configures workspace MCP servers (`.agent/mcp.json`) for Chrome DevTools and Playwright automation.
 - Agents autonomously reference and invoke designated skills, MCP tools, and rule boundaries in their reasoning traces.
 
-### 4. 🎨 UI/UX Pro Max Architecture
+### 4. 🛡️ Human-Readable QA Reports & Live Viewer (`reports/`)
+- **Automated Certification Reports**: When QA Testers (**David Kim** or **Ethan Cole**) finish runtime verification, a detailed Markdown and HTML audit report is automatically generated and saved to `reports/qa_report_latest.md`.
+- **In-App Interactive Viewer**: Click **`📄 View QA Report`** in the header toolbar to view the formatted report with test pass/fail matrices, Playwright browser snapshots, Chrome DevTools MCP metrics, memory leak diagnostics, and formal sign-off certificates. Includes raw Markdown toggle and one-click copy to clipboard.
+
+### 5. 📱 Remote Mobile Control & Telegram Blueprint (`docs/`)
+- Comprehensive architecture plan in [`docs/TELEGRAM_REMOTE_BOT_PLAN.md`](file:///mnt/data/linux-desktop-utility/docs/TELEGRAM_REMOTE_BOT_PLAN.md) detailing:
+  - Free Telegram Bot setup via `@BotFather`.
+  - Instant push notifications on phone with pass/fail summary.
+  - Interactive Inline Keyboard buttons (`[ ✅ Accept & Deploy ]`, `[ ❌ Request Changes ]`).
+  - Mobile reply forwarding: Reply to Telegram message to feed new prompts directly to the Lead Architect.
+  - Free Firebase Spark tier alternative for Nocode mobile builders (FlutterFlow, AppSheet, Glide).
+
+### 6. 🎨 UI/UX Pro Max Architecture
 - **Tab 1: Pipeline Flow (Horizontal)** — Left-to-right vector line connectors (fork, parallel, peer-review gating, join, straight line) with smooth glassmorphism cards.
 - **Tab 2: Agent Details (Live Inspector)** — Multi-agent roster selection with high-performance real-time syntax-colored activity streams.
 - **Tab 3: Settings & Configuration** — Matrix to adjust live Antigravity models, reasoning budgets (Low/Medium/High/Max), and assign employee persona files.
@@ -84,6 +96,8 @@ antigravity-multi-agent-studio/
 │   ├── skills/                # Domain-specific automation skills (playwright, pyqt, concurrency)
 │   └── mcp.json               # MCP server configuration (Chrome DevTools & Playwright)
 ├── assets/                    # Application icons & visual resources
+├── docs/                      # Technical plans & architecture blueprints
+│   └── TELEGRAM_REMOTE_BOT_PLAN.md
 ├── personas/                  # 10 Professional Employee Persona Markdown Profiles
 │   ├── 01_leader_architect.md
 │   ├── 02_dev_frontend.md
@@ -95,15 +109,18 @@ antigravity-multi-agent-studio/
 │   ├── 08_audio_captions_dev.md
 │   ├── 09_video_quality_reviewer.md
 │   └── 10_render_qa_engineer.md
+├── reports/                   # Generated QA certification reports (Markdown)
+│   └── qa_report_latest.md
 ├── src/
 │   ├── core/
-│   │   └── engine.py          # Multi-department concurrency engine & packet bus
+│   │   ├── engine.py          # Multi-department concurrency engine & packet bus
+│   │   └── report_generator.py # Markdown & HTML QA report generator
 │   ├── ui/
-│   │   ├── main_window.py     # 3-tab layout, department switcher, inspector
+│   │   ├── main_window.py     # 3-tab layout, department switcher, report dialog
 │   │   └── tree_node.py       # Compact vector node cards
 │   └── main.py                # Desktop entrypoint
 ├── tests/
-│   └── test_concurrency.py    # 8 headless unit tests
+│   └── test_concurrency.py    # 9 headless unit tests
 ├── build_linux.sh             # Standalone ELF packaging script
 ├── requirements.txt           # Python dependencies (PyQt6, etc.)
 └── README.md
@@ -113,3 +130,4 @@ antigravity-multi-agent-studio/
 
 ## 📜 License
 MIT License. Crafted with Antigravity AI Pair Programming.
+

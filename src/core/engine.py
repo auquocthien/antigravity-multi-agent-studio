@@ -231,6 +231,17 @@ class SubAgentConfig:
                 return False
         return False
 
+    def get_employee_name(self) -> str:
+        """Extracts employee name from persona markdown or falls back to name."""
+        content = self.persona_content or self.load_persona()
+        for line in content.splitlines():
+            line_s = line.strip()
+            if line_s.startswith("- **Name**:") or line_s.startswith("**Name**:"):
+                parts = line_s.split(":", 1)
+                if len(parts) > 1 and parts[1].strip():
+                    return parts[1].strip()
+        return self.name
+
 
 class AgyCliBridge:
     """Executes commands via the Antigravity CLI (agy) with model and effort routing."""
@@ -686,8 +697,25 @@ class SubAgentWorker(QThread):
         self.msleep(250)
         self.progress_signal.emit(self.config.agent_id, 85)
 
-        # Publish final certificate to Leader
-        final_test_msg = "QA Verification 100% SUCCESS: Unit tests, Playwright E2E suites, and Chrome DevTools MCP diagnostics passed."
+        # Generate comprehensive human-readable QA report
+        try:
+            from .report_generator import QAReportGenerator
+        except ImportError:
+            from src.core.report_generator import QAReportGenerator
+
+        report_data = QAReportGenerator.generate_dev_report(
+            task_prompt=self.task_prompt,
+            model=self.config.model,
+            tester_name=self.config.get_employee_name(),
+            leader_name="Alexander Vance"
+        )
+        report_path = report_data.get("file_path", "")
+
+        # Publish final certificate to Leader with embedded QA report path
+        final_test_msg = (
+            f"QA Verification 100% SUCCESS: Unit tests, Playwright E2E suites, and Chrome DevTools MCP diagnostics passed.\n"
+            f"[QA_REPORT_PATH:{report_path}]"
+        )
         self._dispatch_structured_packet(
             intent="APPROVAL_NOTICE",
             to_agent="agent_leader",
@@ -695,7 +723,7 @@ class SubAgentWorker(QThread):
             severity="NORMAL"
         )
         self.msleep(200)
-        self._stream_text("OUTPUT", "QA sign-off granted: 0 console errors, unit & Playwright E2E tests verified via MCP.")
+        self._stream_text("OUTPUT", f"QA sign-off granted: 0 console errors, unit & Playwright E2E tests verified via MCP.\nDetailed QA Report saved to: {report_path}")
 
     # --- Video & Media Production Squad Flows ---
 
@@ -870,7 +898,24 @@ class SubAgentWorker(QThread):
         self.msleep(350)
         self.progress_signal.emit(self.config.agent_id, 85)
 
-        final_msg = "Render Complete: 3600 frames rendered at 68.4 fps. Zero dropped frames. File size: 42.1 MB MP4 certified."
+        # Generate comprehensive human-readable Video QA report
+        try:
+            from .report_generator import QAReportGenerator
+        except ImportError:
+            from src.core.report_generator import QAReportGenerator
+
+        report_data = QAReportGenerator.generate_video_report(
+            task_prompt=self.task_prompt,
+            model=self.config.model,
+            tester_name=self.config.get_employee_name(),
+            leader_name="Liam Parker"
+        )
+        report_path = report_data.get("file_path", "")
+
+        final_msg = (
+            f"Render Complete: 3600 frames rendered at 68.4 fps. Zero dropped frames. File size: 42.1 MB MP4 certified.\n"
+            f"[QA_REPORT_PATH:{report_path}]"
+        )
         self._dispatch_structured_packet(
             intent="APPROVAL_NOTICE",
             to_agent="agent_video_director",
@@ -878,7 +923,7 @@ class SubAgentWorker(QThread):
             severity="NORMAL"
         )
         self.msleep(200)
-        self._stream_text("OUTPUT", "Video render certified and exported to out/video.mp4. Sent completion certificate to Director.")
+        self._stream_text("OUTPUT", f"Video render certified and exported to out/video.mp4. Detailed QA Report saved to: {report_path}")
 
 
 class AgentOrchestrator(QObject):
@@ -891,6 +936,7 @@ class AgentOrchestrator(QObject):
     agent_finished_forwarded = pyqtSignal(str, bool, str)
     pipeline_finished = pyqtSignal(bool, str)
     subordinate_adjusted = pyqtSignal(str, str, str) # (agent_id, model, effort)
+    qa_report_ready = pyqtSignal(str, str, str)  # (dept_id, report_path, markdown_content)
 
     def __init__(self, parent: Optional[QObject] = None) -> None:
         super().__init__(parent)
@@ -900,6 +946,7 @@ class AgentOrchestrator(QObject):
         self._pending_queue: List[SubAgentConfig] = []
         self._current_task: str = ""
         self._is_active: bool = False
+        self.latest_report_data: Optional[Dict[str, Any]] = None
         self.departments: Dict[str, DepartmentConfig] = {
             "dept_dev": DepartmentConfig(
                 dept_id="dept_dev",
@@ -1103,12 +1150,32 @@ class AgentOrchestrator(QObject):
         worker.stream_signal.connect(self.token_stream_forwarded.emit)
         worker.status_signal.connect(self.status_forwarded.emit)
         worker.progress_signal.connect(self.progress_forwarded.emit)
-        worker.message_bus_signal.connect(self.message_bus_forwarded.emit)
+        worker.message_bus_signal.connect(self._on_message_bus_packet)
         worker.finished_signal.connect(self._on_stage_finished)
         worker.adjust_subordinate_signal.connect(self._on_subordinate_adjusted)
 
         self.workers[config.agent_id] = worker
         worker.start()
+
+    def _on_message_bus_packet(self, packet: StandardMessagePacket) -> None:
+        """Forward packet and detect embedded QA report certificates."""
+        self.message_bus_forwarded.emit(packet)
+        if "[QA_REPORT_PATH:" in packet.payload:
+            try:
+                start = packet.payload.index("[QA_REPORT_PATH:") + len("[QA_REPORT_PATH:")
+                end = packet.payload.index("]", start)
+                report_path = packet.payload[start:end].strip()
+                if os.path.exists(report_path):
+                    with open(report_path, "r", encoding="utf-8") as f:
+                        md = f.read()
+                    self.latest_report_data = {
+                        "department_id": self.active_department_id,
+                        "file_path": report_path,
+                        "markdown": md,
+                    }
+                    self.qa_report_ready.emit(self.active_department_id, report_path, md)
+            except Exception:
+                pass
 
     def _on_subordinate_adjusted(self, target_agent: str, model: str, effort: str) -> None:
         """Forward Leader's adjustment of a subordinate agent to the UI."""

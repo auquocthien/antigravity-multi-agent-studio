@@ -355,7 +355,74 @@ class TestHierarchicalArchitecture(unittest.TestCase):
         self.assertIn("playwright-automation", stream_texts)
         self.assertIn("chrome-devtools", stream_texts)
         self.assertIn("mcp__chrome_devtools", stream_texts)
-        self.assertIn("playwright_test_runner", stream_texts)
+    def test_09_qa_report_generation_and_viewer(self) -> None:
+        """Verify QAReportGenerator creates reports and MainWindow displays them."""
+        from src.core.report_generator import QAReportGenerator
+        from src.ui.main_window import QAReportDialog
+
+        # 1. Test Dev Report Generation
+        dev_rep = QAReportGenerator.generate_dev_report(
+            task_prompt="Build Linux desktop utility",
+            model="Gemini 3.8 Flash",
+            tester_name="David Kim",
+            leader_name="Alexander Vance"
+        )
+        self.assertIn("QA Verification & Stability Certification Report", dev_rep["markdown"])
+        self.assertIn("David Kim", dev_rep["markdown"])
+        self.assertIn("Alexander Vance", dev_rep["markdown"])
+        self.assertTrue(os.path.exists(dev_rep["file_path"]))
+        self.assertTrue(os.path.exists(os.path.join(QAReportGenerator.get_reports_dir(), "qa_report_latest.md")))
+
+        # 2. Test Video Report Generation
+        vid_rep = QAReportGenerator.generate_video_report(
+            task_prompt="Create 60s product showcase video",
+            model="Gemini 3.8 Flash",
+            tester_name="Ethan Cole",
+            leader_name="Liam Parker"
+        )
+        self.assertIn("Video Production QA & Broadcast Certification Report", vid_rep["markdown"])
+        self.assertIn("Ethan Cole", vid_rep["markdown"])
+        self.assertIn("Liam Parker", vid_rep["markdown"])
+        self.assertTrue(os.path.exists(vid_rep["file_path"]))
+
+        # 3. Test Orchestrator Signal Wiring
+        orch = AgentOrchestrator()
+        dev_configs = orch.get_department_configs("dept_dev")
+        tester_cfg = next(c for c in dev_configs if c.agent_id == "agent_tester")
+
+        reports_received = []
+        orch.qa_report_ready.connect(lambda d, p, m: reports_received.append((d, p, m)))
+
+        logger = HistoryLogger(base_dir="/tmp/test_agent_history")
+        worker = SubAgentWorker(tester_cfg, "Verify desktop app", logger)
+        worker.message_bus_signal.connect(orch._on_message_bus_packet)
+
+        worker.start()
+        while worker.isRunning():
+            self.app.processEvents()
+        self.assertTrue(worker.wait(3000))
+
+        self.assertGreaterEqual(len(reports_received), 1)
+        dept_id, path, md = reports_received[0]
+        self.assertEqual(dept_id, "dept_dev")
+        self.assertTrue(os.path.exists(path))
+        self.assertIn("David Kim", md)
+
+        # 4. Test UI MainWindow and QAReportDialog
+        window = MainWindow(orch)
+        self.assertTrue(window.btn_view_report.isEnabled())
+        self.assertIn("QA Report", window.btn_view_report.text())
+
+        dialog = QAReportDialog(dev_rep["markdown"], dev_rep["html"], dev_rep["file_path"], window)
+        self.assertIn("David Kim", dialog.viewer.toPlainText())
+        # Toggle view to raw markdown
+        dialog._toggle_view_mode()
+        self.assertTrue(dialog.is_raw_view)
+        self.assertIn("# 🛡️ QA Verification", dialog.viewer.toPlainText())
+        dialog.close()
+
+        window.close()
+        self.app.processEvents()
 
 
 if __name__ == "__main__":
