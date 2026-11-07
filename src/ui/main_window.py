@@ -487,6 +487,27 @@ QStatusBar {
     border-top: 1px solid #1F2937;
     font-size: 12px;
 }
+
+QScrollBar:vertical {
+    background: #0B0F19;
+    width: 8px;
+    border-radius: 4px;
+    margin: 0px;
+}
+
+QScrollBar::handle:vertical {
+    background: #1F2937;
+    min-height: 24px;
+    border-radius: 4px;
+}
+
+QScrollBar::handle:vertical:hover {
+    background: #0284C7;
+}
+
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+    height: 0px;
+}
 """
 
 AVAILABLE_MODELS = AgyCliBridge.get_available_models()
@@ -945,14 +966,26 @@ class MainWindow(QMainWindow):
 
     def _setup_tab_config(self, parent: QWidget) -> None:
         """Tab 3: Configuration page for Customizations, Prompt, Models, and Thinking Levels."""
-        layout = QVBoxLayout(parent)
-        layout.setContentsMargins(14, 14, 14, 14)
-        layout.setSpacing(12)
+        scroll = QScrollArea(parent)
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setStyleSheet("background-color: transparent;")
+
+        outer_layout = QVBoxLayout(parent)
+        outer_layout.setContentsMargins(0, 0, 0, 0)
+        outer_layout.addWidget(scroll)
+
+        container = QWidget()
+        scroll.setWidget(container)
+
+        layout = QVBoxLayout(container)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(14)
 
         # Customization Architecture Status Box
         custom_group = QGroupBox("Customizations (.agent & Global)")
         custom_layout = QHBoxLayout(custom_group)
-        custom_layout.setContentsMargins(12, 10, 12, 10)
+        custom_layout.setContentsMargins(14, 12, 14, 12)
         custom_layout.setSpacing(14)
 
         rules_discovered = CustomizationDiscovery.discover_rules()
@@ -982,38 +1015,50 @@ class MainWindow(QMainWindow):
         # Mission Prompt Box
         prompt_group = QGroupBox("Mission Prompt")
         prompt_vbox = QVBoxLayout(prompt_group)
-        prompt_vbox.setContentsMargins(12, 12, 12, 12)
-        prompt_vbox.setSpacing(6)
+        prompt_vbox.setContentsMargins(14, 12, 14, 12)
+        prompt_vbox.setSpacing(8)
 
         self.edit_prompt = QLineEdit()
+        self.edit_prompt.setFixedHeight(36)
         self.edit_prompt.setText(self.orchestrator.get_active_department().default_prompt)
         prompt_vbox.addWidget(self.edit_prompt)
         layout.addWidget(prompt_group)
 
         # Agent Configuration Matrix Box
-        matrix_group = QGroupBox("Agent Matrix")
+        matrix_group = QGroupBox("Agent Matrix (Model & Thinking Allocations)")
         matrix_layout = QGridLayout(matrix_group)
-        matrix_layout.setContentsMargins(14, 14, 14, 14)
+        matrix_layout.setContentsMargins(16, 16, 16, 16)
         matrix_layout.setSpacing(12)
+
+        # Column stretch factors for optimal alignment
+        matrix_layout.setColumnStretch(0, 3)  # Agent Role / Name
+        matrix_layout.setColumnStretch(1, 3)  # LLM Model Selector
+        matrix_layout.setColumnStretch(2, 2)  # Budget / Thinking Level
+        matrix_layout.setColumnStretch(3, 3)  # Persona file & Actions
 
         # Headers
         headers = ["Agent", "Model", "Budget", "Persona (.md)"]
+        matrix_layout.setRowMinimumHeight(0, 26)
         for col, h in enumerate(headers):
             lbl_h = QLabel(h)
-            lbl_h.setStyleSheet("font-weight: 700; color: #38BDF8; font-size: 11px; padding-bottom: 4px; border-bottom: 1px solid #1F2937;")
+            lbl_h.setStyleSheet("font-weight: 700; color: #38BDF8; font-size: 12px; padding-bottom: 6px; border-bottom: 2px solid #1E293B;")
             matrix_layout.addWidget(lbl_h, 0, col)
 
         self.matrix_row_widgets = []
         for row_idx in range(5):
+            matrix_layout.setRowMinimumHeight(row_idx + 1, 42)
+
             lbl_agent = QLabel(f"Slot {row_idx + 1}")
-            lbl_agent.setStyleSheet("font-size: 12px; color: #F9FAFB;")
+            lbl_agent.setStyleSheet("font-size: 12px; font-weight: 600; color: #F9FAFB;")
             matrix_layout.addWidget(lbl_agent, row_idx + 1, 0)
 
             combo_model = QComboBox()
+            combo_model.setFixedHeight(34)
             combo_model.addItems(self.available_models)
             combo_model.currentIndexChanged.connect(lambda _, idx=row_idx: self._sync_config_slot(idx))
 
             combo_thinking = QComboBox()
+            combo_thinking.setFixedHeight(34)
             combo_thinking.addItems(THINKING_LEVELS)
             combo_thinking.currentIndexChanged.connect(lambda _, idx=row_idx: self._sync_config_slot(idx))
 
@@ -1021,16 +1066,17 @@ class MainWindow(QMainWindow):
             matrix_layout.addWidget(combo_thinking, row_idx + 1, 2)
 
             persona_col = QWidget()
+            persona_col.setFixedHeight(34)
             persona_box = QHBoxLayout(persona_col)
             persona_box.setContentsMargins(0, 0, 0, 0)
             persona_box.setSpacing(6)
 
             lbl_persona = QLabel("📄 Persona")
-            lbl_persona.setStyleSheet("color: #E2E8F0; font-size: 11px; font-weight: 500;")
-            persona_box.addWidget(lbl_persona)
+            lbl_persona.setStyleSheet("color: #E2E8F0; font-size: 12px; font-weight: 500;")
+            persona_box.addWidget(lbl_persona, stretch=1)
 
             btn_browse = QPushButton("📂 Browse")
-            btn_browse.setFixedHeight(26)
+            btn_browse.setFixedHeight(28)
             btn_browse.setStyleSheet("""
                 QPushButton {
                     background-color: #1F2937;
@@ -1050,7 +1096,7 @@ class MainWindow(QMainWindow):
             persona_box.addWidget(btn_browse)
 
             btn_edit = QPushButton("✏️ Edit")
-            btn_edit.setFixedHeight(26)
+            btn_edit.setFixedHeight(28)
             btn_edit.setStyleSheet("""
                 QPushButton {
                     background-color: #1E293B;
