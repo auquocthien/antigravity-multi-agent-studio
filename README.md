@@ -38,18 +38,19 @@ Every agent acts as a true professional employee with a dedicated Markdown profi
 - **Automated Certification Reports**: When QA Testers (**David Kim** or **Ethan Cole**) finish runtime verification, a detailed Markdown and HTML audit report is automatically generated and saved to `reports/qa_report_latest.md`.
 - **In-App Interactive Viewer**: Click **`📄 View QA Report`** in the header toolbar to view the formatted report with test pass/fail matrices, Playwright browser snapshots, Chrome DevTools MCP metrics, memory leak diagnostics, and formal sign-off certificates. Includes raw Markdown toggle and one-click copy to clipboard.
 
-### 5. 📱 Remote Mobile Control & Telegram Blueprint (`docs/`)
-- Comprehensive architecture plan in [`docs/TELEGRAM_REMOTE_BOT_PLAN.md`](file:///mnt/data/linux-desktop-utility/docs/TELEGRAM_REMOTE_BOT_PLAN.md) detailing:
-  - Free Telegram Bot setup via `@BotFather`.
-  - Instant push notifications on phone with pass/fail summary.
-  - Interactive Inline Keyboard buttons (`[ ✅ Accept & Deploy ]`, `[ ❌ Request Changes ]`).
-  - Mobile reply forwarding: Reply to Telegram message to feed new prompts directly to the Lead Architect.
-  - Free Firebase Spark tier alternative for Nocode mobile builders (FlutterFlow, AppSheet, Glide).
+### 5. 📱 Remote Mobile Control & Telegram Push Notifications (`src/core/telegram_notifier.py`)
+- **Automated Telegram Alerts**: When QA verification completes, the system automatically pushes an executive summary to your Telegram chat with test statistics, scores, and formatted audit results.
+- **Interactive Inline Keyboards**: Mobile notifications include instant action buttons:
+  - `[ ✅ Accept & Merge ]`: Confirms and finalizes the deployment from your phone.
+  - `[ ❌ Request Changes ]`: Halts the pipeline for code revisions.
+  - `[ 📄 Send Full Markdown ]`: Delivers the complete QA Markdown report directly to Telegram chat.
+- **Bi-Directional Remote Dispatch**: Simply **reply to the bot's message** with any text prompt on your mobile phone; the background daemon automatically captures it and feeds it into the Lead Architect (**Alexander Vance**) to begin execution on your desktop!
+- **In-App Configuration (Tab 3: Settings)**: Dedicated setup box with live connection tester, token masking, and persistent config in `.agent/telegram_config.json`.
 
 ### 6. 🎨 UI/UX Pro Max Architecture
 - **Tab 1: Pipeline Flow (Horizontal)** — Left-to-right vector line connectors (fork, parallel, peer-review gating, join, straight line) with smooth glassmorphism cards.
 - **Tab 2: Agent Details (Live Inspector)** — Multi-agent roster selection with high-performance real-time syntax-colored activity streams.
-- **Tab 3: Settings & Configuration** — Matrix to adjust live Antigravity models, reasoning budgets (Low/Medium/High/Max), and assign employee persona files.
+- **Tab 3: Settings & Configuration** — Matrix to adjust live Antigravity models, reasoning budgets (Low/Medium/High/Max), assign employee persona files, and configure Telegram Remote Ops.
 
 ---
 
@@ -94,7 +95,8 @@ antigravity-multi-agent-studio/
 ├── .agent/                    # Workspace-level Rules, Skills & MCP
 │   ├── rules/                 # Boundary & gating guidelines
 │   ├── skills/                # Domain-specific automation skills (playwright, pyqt, concurrency)
-│   └── mcp.json               # MCP server configuration (Chrome DevTools & Playwright)
+│   ├── mcp.json               # MCP server configuration (Chrome DevTools & Playwright)
+│   └── telegram_config.json   # Telegram bot credentials & settings
 ├── assets/                    # Application icons & visual resources
 ├── docs/                      # Technical plans & architecture blueprints
 │   └── TELEGRAM_REMOTE_BOT_PLAN.md
@@ -114,13 +116,14 @@ antigravity-multi-agent-studio/
 ├── src/
 │   ├── core/
 │   │   ├── engine.py          # Multi-department concurrency engine & packet bus
-│   │   └── report_generator.py # Markdown & HTML QA report generator
+│   │   ├── report_generator.py # Markdown & HTML QA report generator
+│   │   └── telegram_notifier.py # Telegram notifications & remote control bridge
 │   ├── ui/
-│   │   ├── main_window.py     # 3-tab layout, department switcher, report dialog
+│   │   ├── main_window.py     # 3-tab layout, department switcher, report dialog, telegram settings
 │   │   └── tree_node.py       # Compact vector node cards
 │   └── main.py                # Desktop entrypoint
 ├── tests/
-│   └── test_concurrency.py    # 9 headless unit tests
+│   └── test_concurrency.py    # 10 headless unit tests
 ├── build_linux.sh             # Standalone ELF packaging script
 ├── requirements.txt           # Python dependencies (PyQt6, etc.)
 └── README.md

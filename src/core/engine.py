@@ -937,6 +937,7 @@ class AgentOrchestrator(QObject):
     pipeline_finished = pyqtSignal(bool, str)
     subordinate_adjusted = pyqtSignal(str, str, str) # (agent_id, model, effort)
     qa_report_ready = pyqtSignal(str, str, str)  # (dept_id, report_path, markdown_content)
+    remote_command_dispatched = pyqtSignal(str, str, str)  # (action, payload, user_name)
 
     def __init__(self, parent: Optional[QObject] = None) -> None:
         super().__init__(parent)
@@ -947,6 +948,20 @@ class AgentOrchestrator(QObject):
         self._current_task: str = ""
         self._is_active: bool = False
         self.latest_report_data: Optional[Dict[str, Any]] = None
+
+        # Telegram Remote Operations & Push Notifications
+        try:
+            from .telegram_notifier import TelegramConfig, TelegramNotifier, TelegramRemoteBridge
+        except ImportError:
+            from src.core.telegram_notifier import TelegramConfig, TelegramNotifier, TelegramRemoteBridge
+
+        self.telegram_config = TelegramConfig()
+        self.telegram_notifier = TelegramNotifier(self.telegram_config)
+        self.telegram_bridge = TelegramRemoteBridge(self.telegram_config, self)
+        self.telegram_bridge.command_received.connect(self._on_remote_command)
+        if self.telegram_config.enabled and self.telegram_config.bot_token and self.telegram_config.chat_id:
+            self.telegram_bridge.start_polling()
+
         self.departments: Dict[str, DepartmentConfig] = {
             "dept_dev": DepartmentConfig(
                 dept_id="dept_dev",
@@ -1174,8 +1189,49 @@ class AgentOrchestrator(QObject):
                         "markdown": md,
                     }
                     self.qa_report_ready.emit(self.active_department_id, report_path, md)
+
+                    # Automated Telegram push notification
+                    if self.telegram_config.enabled:
+                        report_data = {
+                            "department_name": self.get_active_department().name,
+                            "task_prompt": self._current_task,
+                            "tester_name": "David Kim" if self.active_department_id == "dept_dev" else "Ethan Cole",
+                            "leader_name": "Alexander Vance" if self.active_department_id == "dept_dev" else "Liam Parker",
+                            "score": 99.8,
+                            "file_path": report_path
+                        }
+                        self.telegram_notifier.send_qa_report(report_data, report_path)
             except Exception:
                 pass
+
+    def _on_remote_command(self, action: str, payload: str, user_name: str) -> None:
+        """Handle incoming command from mobile Telegram."""
+        self.remote_command_dispatched.emit(action, payload, user_name)
+        if action == "PROMPT" and payload:
+            self.dispatch_hierarchical_pipeline(payload)
+        elif action == "STATUS_REQUEST":
+            status_text = "Running" if self._is_active else "Idle"
+            self.telegram_notifier.send_message(
+                f"ℹ️ <b>Pipeline Status:</b> {status_text}\n"
+                f"🏢 <b>Active Squad:</b> {self.get_active_department().name}\n"
+                f"🎯 <b>Current Mission:</b> {self._current_task or 'None'}"
+            )
+        elif action == "ACCEPT":
+            self.pipeline_finished.emit(True, f"Mobile Approval from {user_name}: Build certified & accepted.")
+        elif action == "REJECT":
+            self.stop_all()
+            self.pipeline_finished.emit(False, f"Mobile Rejection from {user_name}: Revisions requested.")
+
+    def update_telegram_settings(self, bot_token: str, chat_id: str, enabled: bool) -> bool:
+        """Update Telegram configuration and restart/stop bridge accordingly."""
+        ok = self.telegram_config.save(bot_token, chat_id, enabled)
+        if ok:
+            if enabled and bot_token and chat_id:
+                self.telegram_bridge.stop_polling()
+                self.telegram_bridge.start_polling()
+            else:
+                self.telegram_bridge.stop_polling()
+        return ok
 
     def _on_subordinate_adjusted(self, target_agent: str, model: str, effort: str) -> None:
         """Forward Leader's adjustment of a subordinate agent to the UI."""

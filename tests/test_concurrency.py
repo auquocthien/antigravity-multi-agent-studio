@@ -421,6 +421,104 @@ class TestHierarchicalArchitecture(unittest.TestCase):
         self.assertIn("# 🛡️ QA Verification", dialog.viewer.toPlainText())
         dialog.close()
 
+    def test_10_telegram_notifier_and_remote_bridge(self) -> None:
+        """Verify TelegramConfig, TelegramNotifier payload formatting, and RemoteBridge dispatching."""
+        from src.core.telegram_notifier import TelegramConfig, TelegramNotifier, TelegramRemoteBridge
+
+        # 1. Test TelegramConfig persistence
+        config = TelegramConfig(bot_token="test_token_123", chat_id="987654321", enabled=True)
+        config.save()
+        self.assertTrue(os.path.exists(config.get_config_path()))
+
+        loaded_config = TelegramConfig()
+        self.assertEqual(loaded_config.bot_token, "test_token_123")
+        self.assertEqual(loaded_config.chat_id, "987654321")
+        self.assertTrue(loaded_config.enabled)
+
+        # 2. Test TelegramNotifier validation & payload generation
+        notifier = TelegramNotifier(loaded_config)
+        # Empty token test
+        empty_notifier = TelegramNotifier(TelegramConfig(bot_token="", chat_id="", enabled=True))
+        ok, msg = empty_notifier.test_connection()
+        self.assertFalse(ok)
+        self.assertIn("empty", msg.lower())
+
+        # Disabled notifier test
+        disabled_notifier = TelegramNotifier(TelegramConfig(bot_token="tok", chat_id="123", enabled=False))
+        ok, msg = disabled_notifier.send_message("Test message")
+        self.assertFalse(ok)
+        self.assertIn("disabled", msg.lower())
+
+        # Test QA Report payload formatting
+        report_data = {
+            "department_name": "Software Engineering Squad",
+            "task_prompt": "Implement Telegram notifications",
+            "tester_name": "David Kim",
+            "leader_name": "Alexander Vance",
+            "score": 99.8,
+            "file_path": "/tmp/non_existent_report.md"
+        }
+        # Capture payload by mocking _api_request
+        intercepted = {}
+        def mock_api(endpoint, payload=None, timeout=10):
+            intercepted["endpoint"] = endpoint
+            intercepted["payload"] = payload
+            return True, {"ok": True, "result": {"message_id": 101}}
+
+        notifier._api_request = mock_api
+        ok, res_msg = notifier.send_qa_report(report_data)
+        self.assertTrue(ok)
+        self.assertEqual(intercepted["endpoint"], "sendMessage")
+        payload = intercepted["payload"]
+        self.assertEqual(payload["chat_id"], "987654321")
+        self.assertIn("David Kim", payload["text"])
+        self.assertIn("QA CERTIFICATE", payload["text"])
+        # Check inline keyboard
+        buttons = payload.get("reply_markup", {}).get("inline_keyboard", [])
+        self.assertEqual(len(buttons), 2)
+        self.assertEqual(buttons[0][0]["callback_data"], "action_accept")
+        self.assertEqual(buttons[0][1]["callback_data"], "action_reject")
+        self.assertEqual(buttons[1][0]["callback_data"], "action_send_report")
+
+        # 3. Test Orchestrator Remote Command Dispatching
+        orch = AgentOrchestrator()
+        remote_events = []
+        orch.remote_command_dispatched.connect(lambda a, p, u: remote_events.append((a, p, u)))
+
+        # Simulate incoming mobile prompt command
+        orch._on_remote_command("PROMPT", "Build responsive mobile widget", "Thien Mobile")
+        self.assertEqual(len(remote_events), 1)
+        self.assertEqual(remote_events[0], ("PROMPT", "Build responsive mobile widget", "Thien Mobile"))
+        self.assertEqual(orch._current_task, "Build responsive mobile widget")
+
+        # Simulate mobile accept command
+        pipeline_results = []
+        orch.pipeline_finished.connect(lambda s, m: pipeline_results.append((s, m)))
+        orch._on_remote_command("ACCEPT", "", "Thien Mobile")
+        self.assertTrue(any(s is True and "Thien Mobile" in m for s, m in pipeline_results))
+
+        # 4. Test UI Tab 3 Telegram widgets
+        window = MainWindow(orch)
+        self.assertTrue(hasattr(window, "chk_tele_enabled"))
+        self.assertTrue(hasattr(window, "edit_tele_token"))
+        self.assertTrue(hasattr(window, "edit_tele_chat_id"))
+        self.assertTrue(hasattr(window, "btn_tele_test"))
+        self.assertTrue(hasattr(window, "btn_tele_save"))
+        self.assertTrue(hasattr(window, "lbl_tele_status"))
+
+        # Test UI save action
+        window.edit_tele_token.setText("new_tok_456")
+        window.edit_tele_chat_id.setText("555123")
+        window.chk_tele_enabled.setChecked(True)
+        window._save_telegram_settings()
+
+        self.assertEqual(orch.telegram_config.bot_token, "new_tok_456")
+        self.assertEqual(orch.telegram_config.chat_id, "555123")
+        self.assertTrue(orch.telegram_config.enabled)
+
+        # Cleanup config to disabled state for future clean test runs
+        config.save(bot_token="", chat_id="", enabled=False)
+
         window.close()
         self.app.processEvents()
 

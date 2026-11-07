@@ -26,6 +26,7 @@ from PyQt6.QtWidgets import (
     QComboBox,
     QGridLayout,
     QScrollArea,
+    QCheckBox,
 )
 
 from src.core.engine import AgentOrchestrator, StandardMessagePacket, SubAgentConfig, AgyCliBridge, CustomizationDiscovery
@@ -1080,8 +1081,104 @@ class MainWindow(QMainWindow):
             })
 
         self._rebind_tab_config()
-
         layout.addWidget(matrix_group)
+
+        # Telegram Remote Operations & Push Notifications Box
+        tele_group = QGroupBox("📱 Telegram Remote Ops & Push Notifications")
+        tele_layout = QVBoxLayout(tele_group)
+        tele_layout.setContentsMargins(14, 12, 14, 12)
+        tele_layout.setSpacing(10)
+
+        # Row 1: Enable checkbox and Status indicator
+        row1 = QHBoxLayout()
+        self.chk_tele_enabled = QCheckBox("Enable Telegram Notifications & Remote Control")
+        self.chk_tele_enabled.setStyleSheet("font-weight: 600; color: #F9FAFB; font-size: 12px;")
+        self.chk_tele_enabled.setChecked(self.orchestrator.telegram_config.enabled)
+        row1.addWidget(self.chk_tele_enabled)
+        row1.addStretch()
+
+        is_connected = self.orchestrator.telegram_config.enabled and self.orchestrator.telegram_config.bot_token
+        self.lbl_tele_status = QLabel("Status: Active & Polling" if is_connected else "Status: Disabled")
+        self.lbl_tele_status.setStyleSheet("color: #34D399; font-size: 11px; font-weight: bold;" if is_connected else "color: #94A3B8; font-size: 11px;")
+        row1.addWidget(self.lbl_tele_status)
+        tele_layout.addLayout(row1)
+
+        # Row 2: Inputs for Bot Token and Chat ID
+        row2 = QHBoxLayout()
+        row2.setSpacing(12)
+
+        token_box = QVBoxLayout()
+        token_box.setSpacing(4)
+        lbl_tok = QLabel("Bot Token (@BotFather):")
+        lbl_tok.setStyleSheet("color: #94A3B8; font-size: 11px;")
+        self.edit_tele_token = QLineEdit()
+        self.edit_tele_token.setEchoMode(QLineEdit.EchoMode.Password)
+        self.edit_tele_token.setPlaceholderText("e.g. 7182938472:AAFlw91kL8kZ9Q...")
+        self.edit_tele_token.setText(self.orchestrator.telegram_config.bot_token)
+        token_box.addWidget(lbl_tok)
+        token_box.addWidget(self.edit_tele_token)
+        row2.addLayout(token_box, stretch=3)
+
+        chat_box = QVBoxLayout()
+        chat_box.setSpacing(4)
+        lbl_chat = QLabel("Chat ID (@userinfobot):")
+        lbl_chat.setStyleSheet("color: #94A3B8; font-size: 11px;")
+        self.edit_tele_chat_id = QLineEdit()
+        self.edit_tele_chat_id.setPlaceholderText("e.g. 123456789")
+        self.edit_tele_chat_id.setText(self.orchestrator.telegram_config.chat_id)
+        chat_box.addWidget(lbl_chat)
+        chat_box.addWidget(self.edit_tele_chat_id)
+        row2.addLayout(chat_box, stretch=2)
+
+        tele_layout.addLayout(row2)
+
+        # Row 3: Action buttons
+        row3 = QHBoxLayout()
+        row3.setSpacing(10)
+
+        self.btn_tele_test = QPushButton("🧪 Test Connection")
+        self.btn_tele_test.setFixedHeight(30)
+        self.btn_tele_test.setStyleSheet("""
+            QPushButton {
+                background-color: #1E293B;
+                color: #38BDF8;
+                border: 1px solid #0284C7;
+                border-radius: 6px;
+                padding: 0 14px;
+                font-weight: 600;
+                font-size: 11px;
+            }
+            QPushButton:hover {
+                background-color: #0F172A;
+            }
+        """)
+        self.btn_tele_test.clicked.connect(self._test_telegram_connection)
+        row3.addWidget(self.btn_tele_test)
+
+        self.btn_tele_save = QPushButton("💾 Save & Connect")
+        self.btn_tele_save.setFixedHeight(30)
+        self.btn_tele_save.setStyleSheet("""
+            QPushButton {
+                background-color: #065F46;
+                color: #A7F3D0;
+                border: 1px solid #10B981;
+                border-radius: 6px;
+                padding: 0 14px;
+                font-weight: 700;
+                font-size: 11px;
+            }
+            QPushButton:hover {
+                background-color: #047857;
+                color: #FFFFFF;
+            }
+        """)
+        self.btn_tele_save.clicked.connect(self._save_telegram_settings)
+        row3.addWidget(self.btn_tele_save)
+
+        row3.addStretch()
+        tele_layout.addLayout(row3)
+
+        layout.addWidget(tele_group)
 
         # History and Action Buttons
         btn_box = QHBoxLayout()
@@ -1323,6 +1420,7 @@ class MainWindow(QMainWindow):
         self.orchestrator.pipeline_finished.connect(self._on_pipeline_finished)
         self.orchestrator.subordinate_adjusted.connect(self._on_subordinate_adjusted)
         self.orchestrator.qa_report_ready.connect(self._on_qa_report_ready)
+        self.orchestrator.remote_command_dispatched.connect(self._on_remote_command_received)
 
     def _handle_dispatch(self) -> None:
         prompt = self.edit_prompt.text().strip()
@@ -1541,6 +1639,57 @@ class MainWindow(QMainWindow):
         dialog = QAReportDialog(markdown_text, html_text, file_path, self)
         dialog.exec()
 
+    def _test_telegram_connection(self) -> None:
+        """Tests the Telegram Bot Token and connection."""
+        token = self.edit_tele_token.text().strip()
+        chat_id = self.edit_tele_chat_id.text().strip()
+        try:
+            from src.core.telegram_notifier import TelegramConfig, TelegramNotifier
+        except ImportError:
+            from .telegram_notifier import TelegramConfig, TelegramNotifier
+
+        cfg = TelegramConfig(bot_token=token, chat_id=chat_id, enabled=True)
+        notifier = TelegramNotifier(cfg)
+        ok, msg = notifier.test_connection()
+        if ok:
+            if chat_id:
+                notifier.send_message("🧪 <b>Antigravity Studio</b>: Telegram connection test successful! Ready to receive notifications and commands.")
+            self.lbl_tele_status.setText(f"Status: {msg}")
+            self.lbl_tele_status.setStyleSheet("color: #34D399; font-size: 11px; font-weight: bold;")
+            self.lbl_status.setText(f"Telegram verified: {msg}")
+        else:
+            self.lbl_tele_status.setText(f"Status: {msg}")
+            self.lbl_tele_status.setStyleSheet("color: #F87171; font-size: 11px; font-weight: bold;")
+            self.lbl_status.setText(f"Telegram test failed: {msg}")
+
+    def _save_telegram_settings(self) -> None:
+        """Saves Telegram configuration and updates background bridge."""
+        token = self.edit_tele_token.text().strip()
+        chat_id = self.edit_tele_chat_id.text().strip()
+        enabled = self.chk_tele_enabled.isChecked()
+
+        ok = self.orchestrator.update_telegram_settings(token, chat_id, enabled)
+        if ok:
+            status_text = "Status: Active & Polling" if enabled and token and chat_id else "Status: Saved (Disabled)"
+            self.lbl_tele_status.setText(status_text)
+            self.lbl_tele_status.setStyleSheet("color: #34D399; font-size: 11px; font-weight: bold;" if enabled else "color: #94A3B8; font-size: 11px;")
+            self.lbl_status.setText("Telegram configuration saved to .agent/telegram_config.json")
+        else:
+            self.lbl_status.setText("Failed to save Telegram configuration.")
+
+    def _on_remote_command_received(self, action: str, payload: str, user_name: str) -> None:
+        """Handle UI notification when mobile command arrives."""
+        if action == "PROMPT":
+            self.lbl_status.setText(f"Remote Mission from {user_name}: {payload}")
+            self.edit_prompt.setText(payload)
+            self.lbl_active_prompt.setText(f"Mission: {payload}")
+        elif action == "ACCEPT":
+            self.lbl_status.setText(f"Remote Approval from {user_name} on Telegram.")
+        elif action == "REJECT":
+            self.lbl_status.setText(f"Remote Rejection from {user_name} on Telegram.")
+
     def closeEvent(self, event: QCloseEvent) -> None:
+        if hasattr(self.orchestrator, "telegram_bridge"):
+            self.orchestrator.telegram_bridge.stop_polling()
         self.orchestrator.stop_all()
         event.accept()
