@@ -306,13 +306,11 @@ class AgyCliBridge:
         model: str = "Gemini 3.8 Flash",
         thinking_level: str = "medium"
     ) -> List[str]:
-        """Build agy execution command array with --model and --effort."""
+        """Build agy execution command array with --model and appropriate flags."""
         agy_bin = cls.get_agy_binary() or "agy"
-        effort_map = {"low": "low", "medium": "medium", "high": "high", "max": "max"}
-        effort = effort_map.get(thinking_level.lower(), "medium")
 
-        # Map display model names to CLI model IDs
-        model_id = "gemini-3.8-flash"
+        # Map display model names to valid CLI model IDs
+        model_id = "gemini-3.8-flash-high"
         if "(" in model and ")" in model:
             extracted = model.split("(")[-1].replace(")", "").strip()
             if extracted:
@@ -320,7 +318,7 @@ class AgyCliBridge:
         elif "4 Argon" in model:
             model_id = "gemini-4-argon-medium"
         elif "3.1 Pro" in model:
-            model_id = "gemini-3.1-pro"
+            model_id = "gemini-3.8-flash-high"
         elif "Opus" in model:
             model_id = "claude-opus-5-5-high"
         elif "Sonnet" in model:
@@ -328,14 +326,20 @@ class AgyCliBridge:
         elif "OSS" in model:
             model_id = "gpt-oss-120b-medium"
 
-        return [
+        cmd = [
             agy_bin,
-            "--agent", target_agent,
+            "--dangerously-skip-permissions",
+            "--mode", "accept-edits",
             "--model", model_id,
-            "--effort", effort,
-            "--output-format", "text",
-            "-p", prompt
         ]
+
+        # Only pass --effort if model_id does not already specify effort suffix (-low, -medium, -high, -max)
+        if not any(model_id.endswith(f"-{sfx}") for sfx in ("low", "medium", "high", "xhigh", "max")):
+            effort_map = {"low": "low", "medium": "medium", "high": "high", "max": "max"}
+            cmd.extend(["--effort", effort_map.get(thinking_level.lower(), "medium")])
+
+        cmd.extend(["-p", prompt])
+        return cmd
 
 
 class SubAgentWorker(QThread):
@@ -442,26 +446,29 @@ class SubAgentWorker(QThread):
             )
 
         try:
-            if self.config.role == AgentRole.LEADER:
-                self._execute_leader_flow()
-            elif self.config.role == AgentRole.DIRECTOR:
-                self._execute_director_flow()
-            elif self.config.role == AgentRole.DEV_UI:
-                self._execute_dev_ui_flow()
-            elif self.config.role == AgentRole.DEV_MOTION:
-                self._execute_dev_motion_flow()
-            elif self.config.role == AgentRole.DEV_CORE:
-                self._execute_dev_core_flow()
-            elif self.config.role == AgentRole.DEV_AUDIO:
-                self._execute_dev_audio_flow()
-            elif self.config.role == AgentRole.REVIEWER:
-                self._execute_reviewer_flow()
-            elif self.config.role == AgentRole.VIDEO_REVIEWER:
-                self._execute_video_reviewer_flow()
-            elif self.config.role == AgentRole.TESTER:
-                self._execute_tester_flow()
-            elif self.config.role == AgentRole.RENDER_QA:
-                self._execute_render_qa_flow()
+            if self.execution_mode == "live_cli":
+                self._execute_live_cli_flow()
+            else:
+                if self.config.role == AgentRole.LEADER:
+                    self._execute_leader_flow()
+                elif self.config.role == AgentRole.DIRECTOR:
+                    self._execute_director_flow()
+                elif self.config.role == AgentRole.DEV_UI:
+                    self._execute_dev_ui_flow()
+                elif self.config.role == AgentRole.DEV_MOTION:
+                    self._execute_dev_motion_flow()
+                elif self.config.role == AgentRole.DEV_CORE:
+                    self._execute_dev_core_flow()
+                elif self.config.role == AgentRole.DEV_AUDIO:
+                    self._execute_dev_audio_flow()
+                elif self.config.role == AgentRole.REVIEWER:
+                    self._execute_reviewer_flow()
+                elif self.config.role == AgentRole.VIDEO_REVIEWER:
+                    self._execute_video_reviewer_flow()
+                elif self.config.role == AgentRole.TESTER:
+                    self._execute_tester_flow()
+                elif self.config.role == AgentRole.RENDER_QA:
+                    self._execute_render_qa_flow()
 
             if self._check_pause_and_running():
                 self.status_signal.emit(agent_id, AgentState.COMPLETED.value)
@@ -510,8 +517,135 @@ class SubAgentWorker(QThread):
         self.message_bus_signal.emit(pkt)
 
         # Trigger Antigravity CLI call preview
-        cmd = AgyCliBridge.format_cli_command(to_agent, payload, self.config.model, self.config.thinking_level)
-        self.stream_signal.emit(self.config.agent_id, "CLI_CMD", f"\n$ {' '.join(cmd)}\n")
+    def _build_agent_prompt(self) -> str:
+        """Construct a detailed prompt for the real agy CLI containing persona, rules, and task."""
+        employee_name = self.config.get_employee_name()
+        role_desc = self.config.system_prompt
+        rules_context = ", ".join(self.config.rules) if self.config.rules else "Standard engineering boundaries"
+        skills_context = ", ".join(self.config.skills) if self.config.skills else "General engineering tools"
+
+        instructions = (
+            f"You are {employee_name} ({self.config.name}).\n"
+            f"Role: {role_desc}\n"
+            f"Enforced Architectural Rules: {rules_context}\n"
+            f"Equipped Skills: {skills_context}\n\n"
+            f"PROJECT MISSION ASSIGNED BY USER: {self.task_prompt}\n\n"
+        )
+
+        if self.config.role == AgentRole.LEADER:
+            instructions += (
+                "YOUR TASK AS LEAD ARCHITECT:\n"
+                "1. Analyze the project mission requirements.\n"
+                "2. Create a clean system architecture specification for the project.\n"
+                "3. Partition the components clearly between Frontend UI and Backend Core.\n"
+                "4. Write out the architecture plan file `architecture_plan.md` in the project.\n"
+            )
+        elif self.config.role == AgentRole.DEV_UI:
+            instructions += (
+                "YOUR TASK AS FRONTEND / UI DEVELOPER:\n"
+                "1. Build the complete, functional PyQt6 graphical user interface for the mission.\n"
+                "2. Implement modern styling, responsive layouts, text fields, buttons, progress bars, and display widgets.\n"
+                "3. Write the UI code into a runnable file in the project (e.g. `src/ui/` or `apps/`). Ensure it is importable and runnable.\n"
+            )
+        elif self.config.role == AgentRole.DEV_CORE:
+            instructions += (
+                "YOUR TASK AS BACKEND & CONCURRENCY DEVELOPER:\n"
+                "1. Implement the core business logic, data models, network fetching, and parsing logic for the mission.\n"
+                "2. Ensure all asynchronous and network tasks run in background threads (e.g. QThread or threading) without blocking the UI.\n"
+                "3. Write the backend code to the appropriate module file so the UI can import and use it.\n"
+            )
+        elif self.config.role == AgentRole.REVIEWER:
+            instructions += (
+                "YOUR TASK AS CODE & SECURITY REVIEWER:\n"
+                "1. Audit the code written by the developers for bugs, race conditions, memory leaks, and error handling.\n"
+                "2. Directly fix any syntax errors, missing imports, or unhandled exceptions in the code.\n"
+                "3. Ensure the project is robust and ready for testing.\n"
+            )
+        elif self.config.role == AgentRole.TESTER:
+            instructions += (
+                "YOUR TASK AS RUNTIME QA TESTER:\n"
+                "1. Test the created application files to verify they run cleanly without errors.\n"
+                "2. Run automated tests or dry-run execution checks.\n"
+                "3. Generate a comprehensive QA Verification Report in Markdown format and save it under `reports/`.\n"
+            )
+        elif self.config.role == AgentRole.DIRECTOR:
+            instructions += "YOUR TASK: Direct video composition, storyboards, pacing, and coordinate motion & audio teams.\n"
+        elif self.config.role == AgentRole.DEV_MOTION:
+            instructions += "YOUR TASK: Implement Remotion React motion graphic scenes and animation components.\n"
+        elif self.config.role == AgentRole.DEV_AUDIO:
+            instructions += "YOUR TASK: Generate audio narration, ducking, and word-synchronized SRT subtitles.\n"
+        elif self.config.role == AgentRole.VIDEO_REVIEWER:
+            instructions += "YOUR TASK: Review video compositions, 60fps frame rate compliance, and visual design.\n"
+        elif self.config.role == AgentRole.RENDER_QA:
+            instructions += "YOUR TASK: Execute headless Remotion render build and verify final MP4 artifact stability.\n"
+        else:
+            instructions += f"Execute your assigned duties: {self.config.system_prompt}\n"
+
+        return instructions
+
+    def _execute_live_cli_flow(self) -> None:
+        """Executes the agent's real autonomous work using the authentic agy CLI."""
+        agent_id = self.config.agent_id
+        self.status_signal.emit(agent_id, AgentState.THINKING.value)
+        self.progress_signal.emit(agent_id, 10)
+
+        prompt = self._build_agent_prompt()
+        cmd = AgyCliBridge.format_cli_command(
+            target_agent=agent_id,
+            prompt=prompt,
+            model=self.config.model,
+            thinking_level=self.config.thinking_level
+        )
+
+        # Log CLI command preview
+        cmd_preview = [c for c in cmd if c != prompt]
+        self.stream_signal.emit(agent_id, "CLI_CMD", f"\n$ {' '.join(cmd_preview)} -p \"[Instruction Prompt]\"\n\n")
+
+        # Project root directory
+        cwd = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        try:
+            self._active_subprocess = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
+                cwd=cwd
+            )
+
+            self.status_signal.emit(agent_id, AgentState.CALLING_TOOL.value)
+            self.progress_signal.emit(agent_id, 30)
+
+            # Stream real-time output line by line into the agent's Inspector terminal
+            for raw_line in iter(self._active_subprocess.stdout.readline, ""):
+                if not self._check_pause_and_running():
+                    break
+                if raw_line:
+                    self.stream_signal.emit(agent_id, "OUTPUT", raw_line)
+                    lower = raw_line.lower()
+                    if "writing" in lower or "creating" in lower or "executing" in lower:
+                        self.progress_signal.emit(agent_id, 75)
+
+            self._active_subprocess.stdout.close()
+            return_code = self._active_subprocess.wait()
+
+            if return_code == 0:
+                self.progress_signal.emit(agent_id, 100)
+                self.stream_signal.emit(agent_id, "SYSTEM", f"\n[SUCCESS] {self.config.name} successfully executed task via agy CLI.\n")
+                
+                # Dispatch packet to message bus
+                summary_msg = f"{self.config.name} completed real code generation via agy CLI."
+                self._dispatch_structured_packet(
+                    intent="TASK_DISPATCH" if self.config.role == AgentRole.LEADER else "APPROVAL_NOTICE",
+                    to_agent="all",
+                    payload=summary_msg,
+                    scope_files=[]
+                )
+            else:
+                self.stream_signal.emit(agent_id, "SYSTEM", f"\n[ERROR] agy CLI process exited with code {return_code}\n")
+
+        except Exception as exc:
+            self.stream_signal.emit(agent_id, "SYSTEM", f"\n[EXCEPTION] Failed to run agy CLI: {exc}\n")
 
     # --- Role-Specific Execution Flows ---
 
