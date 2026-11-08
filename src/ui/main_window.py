@@ -1535,6 +1535,22 @@ class MainWindow(QMainWindow):
         if agent_id in self.node_widgets:
             self.node_widgets[agent_id].set_status(state_name)
 
+        if state_name in ("planning", "thinking", "calling_tool"):
+            stage_names = {
+                "agent_leader": "Stage 1 (Architect / Planning)",
+                "agent_video_director": "Stage 1 (Director / Storyboard)",
+                "agent_dev_ui": "Stage 2 (Frontend Dev & Layout)",
+                "agent_dev_core": "Stage 2 (Backend Dev & Concurrency)",
+                "agent_video_motion": "Stage 2 (Motion Graphics)",
+                "agent_video_audio": "Stage 2 (Audio & Captions)",
+                "agent_reviewer": "Stage 3 (Code Review & Audit)",
+                "agent_video_reviewer": "Stage 3 (Video Quality Audit)",
+                "agent_tester": "Stage 4 (Playwright & Chrome MCP Testing)",
+                "agent_video_render": "Stage 4 (Headless Render QA)",
+            }
+            if agent_id in stage_names:
+                self.lbl_status.setText(f"Running: {stage_names[agent_id]}...")
+
     def _on_agent_progress(self, agent_id: str, percent: int) -> None:
         if agent_id in self.node_widgets:
             self.node_widgets[agent_id].set_progress(percent)

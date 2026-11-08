@@ -942,6 +942,7 @@ class AgentOrchestrator(QObject):
     def __init__(self, parent: Optional[QObject] = None) -> None:
         super().__init__(parent)
         self.workers: Dict[str, SubAgentWorker] = {}
+        self.completed_stages: set = set()
         self.logger = HistoryLogger()
         self.execution_mode: str = "simulation"
         self._pending_queue: List[SubAgentConfig] = []
@@ -1149,6 +1150,8 @@ class AgentOrchestrator(QObject):
     def dispatch_hierarchical_pipeline(self, task_prompt: str) -> None:
         """Start hierarchical pipeline flow: Leader/Director -> Parallel Devs -> Reviewer -> Tester/Render QA."""
         self.stop_all()
+        self.workers.clear()
+        self.completed_stages.clear()
         self._current_task = task_prompt
         self._is_active = True
 
@@ -1247,6 +1250,7 @@ class AgentOrchestrator(QObject):
                 self.pipeline_finished.emit(False, f"Pipeline halted: {agent_id} encountered an error.")
             return
 
+        self.completed_stages.add(agent_id)
         is_video = "video" in agent_id
         # Advance hierarchical stages
         if agent_id in ("agent_leader", "agent_video_director"):
@@ -1259,8 +1263,8 @@ class AgentOrchestrator(QObject):
         elif agent_id in ["agent_dev_ui", "agent_dev_core", "agent_video_motion", "agent_video_audio"]:
             dev1_id = "agent_video_motion" if is_video else "agent_dev_ui"
             dev2_id = "agent_video_audio" if is_video else "agent_dev_core"
-            dev1_done = not self.workers.get(dev1_id, SubAgentWorker(self.config_map[dev1_id], "", self.logger)).isRunning()
-            dev2_done = not self.workers.get(dev2_id, SubAgentWorker(self.config_map[dev2_id], "", self.logger)).isRunning()
+            dev1_done = dev1_id in self.completed_stages
+            dev2_done = dev2_id in self.completed_stages
 
             reviewer_id = "agent_video_reviewer" if is_video else "agent_reviewer"
             if dev1_done and dev2_done and reviewer_id not in self.workers:
@@ -1270,7 +1274,8 @@ class AgentOrchestrator(QObject):
         elif agent_id in ("agent_reviewer", "agent_video_reviewer"):
             # Stage 4: Handoff to Runtime Tester / Render QA
             test_id = "agent_video_render" if is_video else "agent_tester"
-            self._start_worker(self.config_map[test_id])
+            if test_id not in self.workers:
+                self._start_worker(self.config_map[test_id])
 
         elif agent_id in ("agent_tester", "agent_video_render"):
             self._is_active = False
