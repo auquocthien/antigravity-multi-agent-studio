@@ -631,7 +631,8 @@ class SubAgentWorker(QThread):
                 stderr=subprocess.STDOUT,
                 text=True,
                 bufsize=1,
-                cwd=cwd
+                cwd=cwd,
+                env=bridge.get_env() if hasattr(bridge, "get_env") else None
             )
 
             self.status_signal.emit(agent_id, AgentState.CALLING_TOOL.value)
@@ -674,7 +675,7 @@ class SubAgentWorker(QThread):
                     if failover_engine != old_engine:
                         f_bridge = CliRegistry.get_bridge(failover_engine)
                         f_models = f_bridge.get_available_models()
-                        f_model = f_models[0] if f_models else "llama3.2:1b"
+                        f_model = f_models[0] if f_models else ("Gemini 4 Argon (gemini-4-argon-medium)" if "agy" in failover_engine else "llama3.2:1b")
 
                         self.stream_signal.emit(
                             agent_id,
@@ -1310,13 +1311,13 @@ class AgentOrchestrator(QObject):
                     name="Audio & Captions Eng",
                     role=AgentRole.DEV_AUDIO,
                     avatar="🎙️",
-                    model="llama3.2:1b",
+                    model="Gemini 4 Argon (Medium) (gemini-4-argon-medium)",
                     thinking_level="medium",
                     system_prompt="Synthesize voiceover narration, audio ducking, and word-synchronized SRT subtitles.",
                     persona_file=os.path.join(personas_dir, "08_audio_captions_dev.md"),
                     skills=["remotion-captions", "remotion-multimedia"],
                     rules=["01-architecture-boundaries.md"],
-                    cli_engine="ollama"
+                    cli_engine="agy_instance_2"
                 ),
                 SubAgentConfig(
                     agent_id="agent_video_reviewer",
@@ -1379,13 +1380,13 @@ class AgentOrchestrator(QObject):
                 name="Dev 2: Core & Threads",
                 role=AgentRole.DEV_CORE,
                 avatar="💻",
-                model="llama3.2:1b",
+                model="Gemini 4 Argon (Medium) (gemini-4-argon-medium)",
                 thinking_level="medium",
                 system_prompt="Implement asynchronous thread safety, message logging, and agy CLI integration.",
                 persona_file=os.path.join(personas_dir, "03_dev_backend.md"),
                 skills=["concurrency-safe-engine"],
                 rules=["01-architecture-boundaries.md"],
-                cli_engine="ollama"
+                cli_engine="agy_instance_2"
             ),
             SubAgentConfig(
                 agent_id="agent_reviewer",

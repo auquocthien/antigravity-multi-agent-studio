@@ -23,3 +23,8 @@ history/*.jsonl
 # Generated Session Reports
 reports/qa_report_*_*.md
 
+# Agent Profiles & Sensitive Credentials
+.agent/profiles/*
+!.agent/profiles/.gitkeep
+.agent/instance2_config.json
+

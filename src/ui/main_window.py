@@ -34,7 +34,7 @@ from PyQt6.QtWidgets import (
 )
 
 from src.core.engine import AgentOrchestrator, StandardMessagePacket, SubAgentConfig, AgyCliBridge, CustomizationDiscovery
-from src.core.cli_engine import CliRegistry
+from src.core.cli_engine import CliRegistry, AgyInstance2Config, AgyInstance2CliBridge
 from src.core.report_generator import QAReportGenerator
 from src.ui.tree_node import CompactAgentNodeWidget
 
@@ -1095,6 +1095,7 @@ class MainWindow(QMainWindow):
             combo_engine = QComboBox()
             combo_engine.setFixedHeight(34)
             combo_engine.addItem("⚡ agy", "agy")
+            combo_engine.addItem("🚀 agy_2", "agy_instance_2")
             combo_engine.addItem("🦙 ollama", "ollama")
             combo_engine.addItem("🔧 custom", "custom")
             combo_engine.currentIndexChanged.connect(lambda _, idx=row_idx: self._on_engine_changed(idx))
@@ -1192,6 +1193,85 @@ class MainWindow(QMainWindow):
         failover_layout.addStretch()
 
         layout.addWidget(failover_group)
+
+        # Antigravity CLI Instance 2 (Isolated Account & Profile) Box
+        inst2_bridge = CliRegistry.get_bridge("agy_instance_2")
+        inst2_cfg = getattr(inst2_bridge, "config", None) or AgyInstance2Config.load()
+
+        inst2_group = QGroupBox("🚀 Antigravity CLI Instance 2 (Isolated Account & Profile)")
+        inst2_layout = QVBoxLayout(inst2_group)
+        inst2_layout.setContentsMargins(14, 12, 14, 12)
+        inst2_layout.setSpacing(10)
+
+        # Row 1: Profile Directory and Auth Status
+        i2_row1 = QHBoxLayout()
+        lbl_p_title = QLabel("Profile Directory:")
+        lbl_p_title.setStyleSheet("color: #94A3B8; font-size: 11px;")
+        self.lbl_inst2_profile = QLabel(inst2_cfg.profile_dir)
+        self.lbl_inst2_profile.setStyleSheet("color: #38BDF8; font-size: 11px; font-family: monospace; font-weight: 600;")
+        i2_row1.addWidget(lbl_p_title)
+        i2_row1.addWidget(self.lbl_inst2_profile)
+        i2_row1.addStretch()
+
+        is_auth = inst2_bridge.is_authenticated() if hasattr(inst2_bridge, "is_authenticated") else False
+        self.lbl_inst2_status = QLabel("● Authenticated" if is_auth else "● Authentication Required")
+        self.lbl_inst2_status.setStyleSheet("color: #34D399; font-size: 11px; font-weight: bold;" if is_auth else "color: #F59E0B; font-size: 11px; font-weight: bold;")
+        i2_row1.addWidget(self.lbl_inst2_status)
+        inst2_layout.addLayout(i2_row1)
+
+        # Row 2: API Key input & Terminal OAuth Login button
+        i2_row2 = QHBoxLayout()
+        i2_row2.setSpacing(10)
+
+        lbl_api_key = QLabel("Gemini API Key (Direct Mode):")
+        lbl_api_key.setStyleSheet("color: #94A3B8; font-size: 11px;")
+        self.edit_inst2_api_key = QLineEdit()
+        self.edit_inst2_api_key.setEchoMode(QLineEdit.EchoMode.Password)
+        self.edit_inst2_api_key.setPlaceholderText("Paste GEMINI_API_KEY for isolated instance...")
+        self.edit_inst2_api_key.setText(inst2_cfg.gemini_api_key)
+        self.edit_inst2_api_key.setFixedHeight(28)
+
+        self.btn_inst2_save_key = QPushButton("💾 Save API Key")
+        self.btn_inst2_save_key.setFixedHeight(28)
+        self.btn_inst2_save_key.setStyleSheet("""
+            QPushButton {
+                background-color: #0284C7;
+                color: #FFFFFF;
+                border-radius: 4px;
+                padding: 0 12px;
+                font-weight: 600;
+                font-size: 11px;
+            }
+            QPushButton:hover {
+                background-color: #0369A1;
+            }
+        """)
+        self.btn_inst2_save_key.clicked.connect(self._save_inst2_settings)
+
+        self.btn_inst2_term_login = QPushButton("🔑 Login Instance 2 in Terminal")
+        self.btn_inst2_term_login.setFixedHeight(28)
+        self.btn_inst2_term_login.setStyleSheet("""
+            QPushButton {
+                background-color: #4F46E5;
+                color: #FFFFFF;
+                border-radius: 4px;
+                padding: 0 12px;
+                font-weight: 600;
+                font-size: 11px;
+            }
+            QPushButton:hover {
+                background-color: #4338CA;
+            }
+        """)
+        self.btn_inst2_term_login.clicked.connect(self._launch_inst2_terminal)
+
+        i2_row2.addWidget(lbl_api_key)
+        i2_row2.addWidget(self.edit_inst2_api_key, stretch=1)
+        i2_row2.addWidget(self.btn_inst2_save_key)
+        i2_row2.addWidget(self.btn_inst2_term_login)
+        inst2_layout.addLayout(i2_row2)
+
+        layout.addWidget(inst2_group)
 
         # Telegram Remote Operations & Push Notifications Box
         tele_group = QGroupBox("📱 Telegram Remote Ops & Push Notifications")
@@ -1506,7 +1586,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(token_group)
 
         # === 2.5 Dual-CLI Engine Comparison Cards ===
-        cli_group = QGroupBox("⚔️ Dual-CLI Engine Telemetry (⚡ agy vs 🦙 ollama / custom)")
+        cli_group = QGroupBox("⚔️ Multi-CLI Engine Telemetry (⚡ agy Instance 1 vs 🚀 agy Instance 2 / ollama)")
         cli_layout = QHBoxLayout(cli_group)
         cli_layout.setContentsMargins(14, 12, 14, 12)
         cli_layout.setSpacing(12)
@@ -1566,8 +1646,8 @@ class MainWindow(QMainWindow):
         self.lbl_ollama_calls = QLabel("0")
         self.lbl_ollama_io = QLabel("0 in / 0 out")
 
-        cli_layout.addWidget(create_cli_card("⚡ agy (Google Gemini CLI)", self.lbl_agy_total, self.lbl_agy_calls, self.lbl_agy_io, "#38BDF8"))
-        cli_layout.addWidget(create_cli_card("🦙 ollama (Local Llama/Custom CLI)", self.lbl_ollama_total, self.lbl_ollama_calls, self.lbl_ollama_io, "#34D399"))
+        cli_layout.addWidget(create_cli_card("⚡ agy (Instance 1 - Host Account)", self.lbl_agy_total, self.lbl_agy_calls, self.lbl_agy_io, "#38BDF8"))
+        cli_layout.addWidget(create_cli_card("🚀 agy (Instance 2 - Isolated Profile)", self.lbl_ollama_total, self.lbl_ollama_calls, self.lbl_ollama_io, "#818CF8"))
 
         layout.addWidget(cli_group)
 
@@ -2220,10 +2300,16 @@ class MainWindow(QMainWindow):
             self.lbl_agy_calls.setText(f"{agy_stat.get('calls_count', 0):,}")
             self.lbl_agy_io.setText(f"{agy_stat.get('input_tokens', 0):,} in / {agy_stat.get('output_tokens', 0):,} out")
 
+            inst2_stat = cli_stats.get("agy_instance_2", {})
             ollama_stat = cli_stats.get("ollama", {})
-            self.lbl_ollama_total.setText(f"{ollama_stat.get('total_tokens', 0):,}")
-            self.lbl_ollama_calls.setText(f"{ollama_stat.get('calls_count', 0):,}")
-            self.lbl_ollama_io.setText(f"{ollama_stat.get('input_tokens', 0):,} in / {ollama_stat.get('output_tokens', 0):,} out")
+            if inst2_stat.get("total_tokens", 0) > 0 or inst2_stat.get("calls_count", 0) > 0:
+                sec_stat = inst2_stat
+            else:
+                sec_stat = ollama_stat
+
+            self.lbl_ollama_total.setText(f"{sec_stat.get('total_tokens', 0):,}")
+            self.lbl_ollama_calls.setText(f"{sec_stat.get('calls_count', 0):,}")
+            self.lbl_ollama_io.setText(f"{sec_stat.get('input_tokens', 0):,} in / {sec_stat.get('output_tokens', 0):,} out")
 
         # Update Table Rows (9 columns)
         agents_data = snapshot.get("agents", {})
@@ -2251,10 +2337,22 @@ class MainWindow(QMainWindow):
             self.tbl_usage.setItem(row, 0, it_name)
 
             # Column 1: Engine Badge
-            engine_text = f"⚡ {engine}" if engine == "agy" else (f"🦙 {engine}" if engine == "ollama" else f"🔧 {engine}")
+            if engine == "agy":
+                engine_text = "⚡ agy (Inst 1)"
+                eng_color = "#38BDF8"
+            elif engine == "agy_instance_2":
+                engine_text = "🚀 agy (Inst 2)"
+                eng_color = "#818CF8"
+            elif engine == "ollama":
+                engine_text = "🦙 ollama"
+                eng_color = "#34D399"
+            else:
+                engine_text = f"🔧 {engine}"
+                eng_color = "#F59E0B"
+
             it_eng = QTableWidgetItem(engine_text)
             it_eng.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-            it_eng.setForeground(QColor("#38BDF8" if engine == "agy" else ("#34D399" if engine == "ollama" else "#F59E0B")))
+            it_eng.setForeground(QColor(eng_color))
             self.tbl_usage.setItem(row, 1, it_eng)
 
             # Column 2: Model
@@ -2424,6 +2522,30 @@ class MainWindow(QMainWindow):
 
         self.lbl_status.setText(f"Resuming pipeline from {chk.stage_name}...")
         self.orchestrator.resume_from_checkpoint()
+
+    def _save_inst2_settings(self) -> None:
+        """Saves Gemini API key and updates Instance 2 config."""
+        api_key = self.edit_inst2_api_key.text().strip()
+        bridge = CliRegistry.get_bridge("agy_instance_2")
+        if hasattr(bridge, "config"):
+            bridge.config.gemini_api_key = api_key
+            if api_key:
+                bridge.config.auth_mode = "gemini_api_key"
+            else:
+                bridge.config.auth_mode = "oauth"
+            bridge.config.save()
+
+            is_auth = bridge.is_authenticated()
+            self.lbl_inst2_status.setText("● Authenticated" if is_auth else "● Authentication Required")
+            self.lbl_inst2_status.setStyleSheet("color: #34D399; font-size: 11px; font-weight: bold;" if is_auth else "color: #F59E0B; font-size: 11px; font-weight: bold;")
+            self.lbl_status.setText("Antigravity CLI Instance 2 settings saved.")
+
+    def _launch_inst2_terminal(self) -> None:
+        """Launches external terminal for OAuth authentication in Instance 2 isolated profile."""
+        bridge = CliRegistry.get_bridge("agy_instance_2")
+        if hasattr(bridge, "launch_interactive_login"):
+            ok, msg = bridge.launch_interactive_login()
+            self.lbl_status.setText(msg)
 
     def closeEvent(self, event: QCloseEvent) -> None:
         if hasattr(self.orchestrator, "telegram_bridge"):

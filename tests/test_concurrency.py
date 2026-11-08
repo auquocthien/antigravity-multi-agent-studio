@@ -626,6 +626,7 @@ class TestHierarchicalArchitecture(unittest.TestCase):
         from src.core.cli_engine import (
             CliRegistry,
             AgyCliBridge,
+            AgyInstance2CliBridge,
             OllamaCliBridge,
             CustomCliBridge,
         )
@@ -633,12 +634,18 @@ class TestHierarchicalArchitecture(unittest.TestCase):
 
         # 1. Test CLI Bridge Registry and Command Generation
         bridge_agy = CliRegistry.get_bridge("agy")
+        bridge_inst2 = CliRegistry.get_bridge("agy_instance_2")
         bridge_ollama = CliRegistry.get_bridge("ollama")
         bridge_custom = CliRegistry.get_bridge("custom")
 
         self.assertIsInstance(bridge_agy, AgyCliBridge)
+        self.assertIsInstance(bridge_inst2, AgyInstance2CliBridge)
         self.assertIsInstance(bridge_ollama, OllamaCliBridge)
         self.assertIsInstance(bridge_custom, CustomCliBridge)
+
+        env_inst2 = bridge_inst2.get_env()
+        self.assertIn("HOME", env_inst2)
+        self.assertIn("agy_instance_2", env_inst2["HOME"])
 
         cmd_agy = bridge_agy.format_command(
             target_agent="agent_dev_ui",
@@ -853,8 +860,8 @@ class TestHierarchicalArchitecture(unittest.TestCase):
         self.assertFalse(bridge_agy.is_rate_limited("Building component successfully", 0))
 
         # Test failover registry
-        self.assertEqual(CliRegistry.get_failover_engine("agy"), "ollama")
-        self.assertEqual(CliRegistry.get_failover_engine("ollama"), "agy")
+        self.assertEqual(CliRegistry.get_failover_engine("agy"), "agy_instance_2")
+        self.assertEqual(CliRegistry.get_failover_engine("agy_instance_2"), "agy")
 
         # 3. Test Department Default Dual-CLI Configuration
         orch = AgentOrchestrator()
@@ -864,18 +871,18 @@ class TestHierarchicalArchitecture(unittest.TestCase):
         dev1 = next(c for c in dev_configs if c.agent_id == "agent_dev_ui")
         dev2 = next(c for c in dev_configs if c.agent_id == "agent_dev_core")
 
-        # Dev 1 on agy, Dev 2 on ollama with llama3.2:1b
+        # Dev 1 on agy (Inst 1), Dev 2 on agy_instance_2 (Inst 2) with Gemini
         self.assertEqual(dev1.cli_engine, "agy")
-        self.assertEqual(dev2.cli_engine, "ollama")
-        self.assertEqual(dev2.model, "llama3.2:1b")
+        self.assertEqual(dev2.cli_engine, "agy_instance_2")
+        self.assertIn("gemini", dev2.model.lower())
 
         # Media department check
         video_configs = orch.get_department_configs("dept_video")
         v_dev1 = next(c for c in video_configs if c.agent_id == "agent_video_motion")
         v_dev2 = next(c for c in video_configs if c.agent_id == "agent_video_audio")
         self.assertEqual(v_dev1.cli_engine, "agy")
-        self.assertEqual(v_dev2.cli_engine, "ollama")
-        self.assertEqual(v_dev2.model, "llama3.2:1b")
+        self.assertEqual(v_dev2.cli_engine, "agy_instance_2")
+        self.assertIn("gemini", v_dev2.model.lower())
 
         # 4. Test Orchestrator Resume from Checkpoint
         self.assertTrue(orch.has_checkpoint())
@@ -899,10 +906,28 @@ class TestHierarchicalArchitecture(unittest.TestCase):
         self.assertTrue(window.btn_resume.isEnabled())
         self.assertIn("Stage 2 (Development)", window.btn_resume.text())
 
+        # Verify Dev 2 (slot index 2) engine combobox is set to agy_instance_2
+        self.assertEqual(window.matrix_row_widgets[2]["combo_engine"].currentData(), "agy_instance_2")
+
         # Verify Failover Strategy Checkbox
         self.assertTrue(hasattr(window, "chk_auto_failover"))
         self.assertTrue(window.chk_auto_failover.isChecked())
         self.assertTrue(orch.auto_failover_enabled)
+
+        # Verify Instance 2 UI widgets
+        self.assertTrue(hasattr(window, "edit_inst2_api_key"))
+        self.assertTrue(hasattr(window, "btn_inst2_save_key"))
+        self.assertTrue(hasattr(window, "btn_inst2_term_login"))
+        self.assertTrue(hasattr(window, "lbl_inst2_status"))
+
+        # Test saving API key in UI
+        window.edit_inst2_api_key.setText("test_gemini_key_789")
+        window._save_inst2_settings()
+        self.assertEqual(window.lbl_inst2_status.text(), "● Authenticated")
+
+        # Reset key to clean state
+        window.edit_inst2_api_key.setText("")
+        window._save_inst2_settings()
 
         # Toggle failover off and verify
         window.chk_auto_failover.setChecked(False)
@@ -913,7 +938,7 @@ class TestHierarchicalArchitecture(unittest.TestCase):
         self.assertTrue(orch.auto_failover_enabled)
 
         # Simulate Failover Signal
-        orch.failover_forwarded.emit("agent_dev_ui", "agy", "ollama", "429 Rate Limit")
+        orch.failover_forwarded.emit("agent_dev_ui", "agy", "agy_instance_2", "429 Rate Limit")
         self.app.processEvents()
         self.assertIn("Failover", window.lbl_status.text())
 

@@ -6,6 +6,7 @@ import shutil
 import subprocess
 import time
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple, Any
 
 
@@ -53,6 +54,10 @@ class BaseCliBridge(ABC):
             (text_chunk, usage_dict_or_none)
         """
         pass
+
+    def get_env(self) -> Optional[Dict[str, str]]:
+        """Return custom environment variables for subprocess execution, or None to inherit system env."""
+        return None
 
     def is_rate_limited(self, output_line: str, exit_code: Optional[int] = None) -> bool:
         """Detect whether this output line or exit code indicates a rate limit or quota exhaustion."""
@@ -211,6 +216,162 @@ class AgyCliBridge(BaseCliBridge):
         return (raw_line, None)
 
 
+@dataclass
+class AgyInstance2Config:
+    """Configuration for the secondary isolated Antigravity CLI instance."""
+    profile_dir: str = ""
+    auth_mode: str = "oauth"  # "oauth" or "gemini_api_key"
+    gemini_api_key: str = ""
+
+    @classmethod
+    def get_default_profile_dir(cls) -> str:
+        base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        return os.path.join(base_dir, ".agent", "profiles", "agy_instance_2")
+
+    @classmethod
+    def get_config_file_path(cls) -> str:
+        base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        return os.path.join(base_dir, ".agent", "instance2_config.json")
+
+    @classmethod
+    def load(cls) -> "AgyInstance2Config":
+        p = cls.get_config_file_path()
+        if os.path.exists(p):
+            try:
+                with open(p, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    return cls(
+                        profile_dir=data.get("profile_dir") or cls.get_default_profile_dir(),
+                        auth_mode=data.get("auth_mode", "oauth"),
+                        gemini_api_key=data.get("gemini_api_key", "")
+                    )
+            except Exception:
+                pass
+        return cls(profile_dir=cls.get_default_profile_dir())
+
+    def save(self) -> bool:
+        p = self.get_config_file_path()
+        try:
+            os.makedirs(os.path.dirname(p), exist_ok=True)
+            with open(p, "w", encoding="utf-8") as f:
+                json.dump({
+                    "profile_dir": self.profile_dir or self.get_default_profile_dir(),
+                    "auth_mode": self.auth_mode,
+                    "gemini_api_key": self.gemini_api_key
+                }, f, indent=2)
+            return True
+        except Exception:
+            return False
+
+
+class AgyInstance2CliBridge(AgyCliBridge):
+    """Executes commands via an isolated 2nd Antigravity CLI instance.
+    Runs with a distinct HOME/profile directory and/or GEMINI_API_KEY,
+    ensuring complete decoupling from the account logged in on the host machine.
+    """
+
+    def __init__(self, config: Optional[AgyInstance2Config] = None) -> None:
+        super().__init__()
+        self.config: AgyInstance2Config = config or AgyInstance2Config.load()
+        if not self.config.profile_dir:
+            self.config.profile_dir = AgyInstance2Config.get_default_profile_dir()
+
+    @property
+    def engine_id(self) -> str:
+        return "agy_instance_2"
+
+    @property
+    def display_name(self) -> str:
+        return "🚀 Antigravity (Instance 2 / Isolated)"
+
+    def get_env(self) -> Dict[str, str]:
+        """Returns isolated environment with separate HOME and optional GEMINI_API_KEY."""
+        env = os.environ.copy()
+        profile_path = os.path.abspath(self.config.profile_dir or AgyInstance2Config.get_default_profile_dir())
+        os.makedirs(os.path.join(profile_path, ".gemini", "antigravity-cli"), exist_ok=True)
+        env["HOME"] = profile_path
+        if self.config.auth_mode == "gemini_api_key" and self.config.gemini_api_key.strip():
+            env["GEMINI_API_KEY"] = self.config.gemini_api_key.strip()
+        return env
+
+    def is_authenticated(self) -> bool:
+        """Check if Instance 2 has credentials (either API key or OAuth token file)."""
+        if self.config.auth_mode == "gemini_api_key" and self.config.gemini_api_key.strip():
+            return True
+        profile_path = os.path.abspath(self.config.profile_dir or AgyInstance2Config.get_default_profile_dir())
+        token_file = os.path.join(profile_path, ".gemini", "antigravity-cli", "antigravity-oauth-token")
+        return os.path.exists(token_file) and os.path.getsize(token_file) > 10
+
+    def launch_interactive_login(self) -> Tuple[bool, str]:
+        """Opens an interactive terminal allowing the user to authenticate the 2nd instance via OAuth."""
+        profile_path = os.path.abspath(self.config.profile_dir or AgyInstance2Config.get_default_profile_dir())
+        os.makedirs(os.path.join(profile_path, ".gemini", "antigravity-cli"), exist_ok=True)
+        agy_bin = self.get_agy_binary() or "agy"
+
+        terminal = shutil.which("xfce4-terminal") or shutil.which("kitty")
+        if not terminal:
+            return (False, "No GUI terminal emulator (xfce4-terminal, kitty) found.")
+
+        try:
+            if "xfce4-terminal" in terminal:
+                subprocess.Popen([
+                    terminal,
+                    "--title=Antigravity CLI - Instance 2 Login",
+                    "-e",
+                    f"bash -c 'export HOME=\"{profile_path}\"; echo \"Logging in Antigravity CLI Instance 2...\"; {agy_bin}; exec bash'"
+                ], start_new_session=True)
+            else:
+                subprocess.Popen([
+                    terminal,
+                    "--title", "Antigravity CLI - Instance 2 Login",
+                    "bash", "-c",
+                    f"export HOME=\"{profile_path}\"; echo \"Logging in Antigravity CLI Instance 2...\"; {agy_bin}; exec bash"
+                ], start_new_session=True)
+            return (True, f"Launched interactive login in {os.path.basename(terminal)} with profile {profile_path}")
+        except Exception as e:
+            return (False, f"Failed to launch terminal: {e}")
+
+    def get_available_models(self) -> List[str]:
+        """Fetch real available models from isolated agy CLI instance or fallback gracefully."""
+        agy_bin = self.get_agy_binary()
+        if agy_bin:
+            try:
+                proc = subprocess.run(
+                    [agy_bin, "models"],
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                    env=self.get_env()
+                )
+                if proc.returncode == 0 and proc.stdout:
+                    models = []
+                    for line in proc.stdout.splitlines():
+                        line = line.strip()
+                        if line and not line.startswith("⠋") and not line.startswith("Error") and not line.startswith("Please"):
+                            clean_line = "".join(c for c in line if ord(c) < 128 or c in "()·-").strip()
+                            parts = clean_line.split()
+                            if parts:
+                                model_id = parts[0]
+                                if len(parts) > 1:
+                                    display_name = " ".join(parts[1:])
+                                    models.append(f"{display_name} ({model_id})")
+                                else:
+                                    models.append(model_id)
+                    if models:
+                        return models
+            except Exception:
+                pass
+
+        return [
+            "Gemini 4 Argon (gemini-4-argon-medium)",
+            "Gemini 3.8 Flash (gemini-3.8-flash-high)",
+            "Claude Opus 5.5 (claude-opus-5-5-high)",
+            "Claude Sonnet 5.5 (claude-sonnet-5-5-high)",
+            "GPT-OSS 120B (gpt-oss-120b-medium)",
+            "Gemini 3.1 Pro (gemini-3.1-pro)",
+        ]
+
+
 class OllamaCliBridge(BaseCliBridge):
     """Executes commands via local Ollama CLI and captures prompt/eval token telemetry."""
 
@@ -364,6 +525,7 @@ class CliRegistry:
 
     _bridges: Dict[str, BaseCliBridge] = {
         "agy": AgyCliBridge(),
+        "agy_instance_2": AgyInstance2CliBridge(),
         "ollama": OllamaCliBridge(),
         "custom": CustomCliBridge()
     }
@@ -377,6 +539,9 @@ class CliRegistry:
         norm = (engine_id or "agy").lower().strip()
         if norm in cls._bridges:
             return cls._bridges[norm]
+        # Match aliases for instance 2
+        if any(term in norm for term in ["instance_2", "instance2", "agy_2", "agy_alt", "alt"]):
+            return cls._bridges["agy_instance_2"]
         # Match by prefix
         for k, v in cls._bridges.items():
             if k in norm or norm in k:
@@ -399,8 +564,11 @@ class CliRegistry:
     def get_failover_engine(cls, current_engine: str) -> str:
         """Returns secondary fallback engine when current engine encounters limits."""
         norm = (current_engine or "agy").lower().strip()
-        if "agy" in norm:
-            return "ollama" if "ollama" in cls._bridges else "custom"
+        if any(term in norm for term in ["instance_2", "instance2", "agy_2", "agy_alt"]):
+            return "agy"
+        elif "agy" in norm:
+            return "agy_instance_2"
         elif "ollama" in norm:
-            return "agy" if "agy" in cls._bridges else "custom"
-        return "ollama"
+            return "agy"
+        return "agy_instance_2"
+

@@ -116,6 +116,7 @@ class UsageTracker(QObject):
         self.model_stats: Dict[str, int] = {}  # model_name -> total_tokens
         self.cli_stats: Dict[str, Dict[str, Any]] = {
             "agy": {"calls_count": 0, "input_tokens": 0, "output_tokens": 0, "thinking_tokens": 0, "total_tokens": 0, "total_duration_sec": 0.0},
+            "agy_instance_2": {"calls_count": 0, "input_tokens": 0, "output_tokens": 0, "thinking_tokens": 0, "total_tokens": 0, "total_duration_sec": 0.0},
             "ollama": {"calls_count": 0, "input_tokens": 0, "output_tokens": 0, "thinking_tokens": 0, "total_tokens": 0, "total_duration_sec": 0.0},
         }
 
@@ -225,6 +226,7 @@ class UsageTracker(QObject):
         self.model_stats.clear()
         self.cli_stats = {
             "agy": {"calls_count": 0, "input_tokens": 0, "output_tokens": 0, "thinking_tokens": 0, "total_tokens": 0, "total_duration_sec": 0.0},
+            "agy_instance_2": {"calls_count": 0, "input_tokens": 0, "output_tokens": 0, "thinking_tokens": 0, "total_tokens": 0, "total_duration_sec": 0.0},
             "ollama": {"calls_count": 0, "input_tokens": 0, "output_tokens": 0, "thinking_tokens": 0, "total_tokens": 0, "total_duration_sec": 0.0},
         }
         self._save()
