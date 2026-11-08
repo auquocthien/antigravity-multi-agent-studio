@@ -11,9 +11,13 @@ from enum import Enum
 from typing import Dict, List, Any, Optional
 from PyQt6.QtCore import QObject, QThread, pyqtSignal, QMutex, QWaitCondition
 
+try:
+    from .cli_engine import BaseCliBridge, AgyCliBridge, OllamaCliBridge, CustomCliBridge, CliRegistry
+except ImportError:
+    from src.core.cli_engine import BaseCliBridge, AgyCliBridge, OllamaCliBridge, CustomCliBridge, CliRegistry
+
 
 class AgentRole(Enum):
-    # Software Engineering Squad Roles
     LEADER = "Lead Architect"
     DEV_UI = "Frontend Dev"
     DEV_CORE = "Backend Dev"
@@ -192,7 +196,8 @@ class SubAgentConfig:
         system_prompt: str = "",
         persona_file: str = "",
         skills: Optional[List[str]] = None,
-        rules: Optional[List[str]] = None
+        rules: Optional[List[str]] = None,
+        cli_engine: str = "agy"
     ) -> None:
         self.agent_id: str = agent_id
         self.name: str = name
@@ -205,6 +210,7 @@ class SubAgentConfig:
         self.persona_content: str = ""
         self.skills: List[str] = list(skills) if skills else []
         self.rules: List[str] = list(rules) if rules else []
+        self.cli_engine: str = cli_engine
         self.load_persona()
 
     def load_persona(self) -> str:
@@ -587,25 +593,27 @@ class SubAgentWorker(QThread):
         return instructions
 
     def _execute_live_cli_flow(self) -> None:
-        """Executes the agent's real autonomous work using the authentic agy CLI."""
+        """Executes the agent's real autonomous work using the configured CLI provider."""
         agent_id = self.config.agent_id
         self.status_signal.emit(agent_id, AgentState.THINKING.value)
         self.progress_signal.emit(agent_id, 10)
 
         prompt = self._build_agent_prompt()
-        cmd = AgyCliBridge.format_cli_command(
+        cwd = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+        bridge = CliRegistry.get_bridge(self.config.cli_engine)
+        cmd = bridge.format_command(
             target_agent=agent_id,
             prompt=prompt,
             model=self.config.model,
-            thinking_level=self.config.thinking_level
+            thinking_level=self.config.thinking_level,
+            cwd=cwd
         )
 
         # Log CLI command preview
         cmd_preview = [c for c in cmd if c != prompt]
-        self.stream_signal.emit(agent_id, "CLI_CMD", f"\n$ {' '.join(cmd_preview)} -p \"[Instruction Prompt]\"\n\n")
+        self.stream_signal.emit(agent_id, "CLI_CMD", f"\n$ {' '.join(cmd_preview)} \"[Instruction Prompt]\"\n\n")
 
-        # Project root directory
-        cwd = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
         start_t = time.time()
         captured_usage: Optional[Dict[str, Any]] = None
         try:
@@ -626,26 +634,14 @@ class SubAgentWorker(QThread):
                 if not self._check_pause_and_running():
                     break
                 if raw_line:
-                    line_s = raw_line.strip()
-                    if line_s.startswith("{") and line_s.endswith("}"):
-                        try:
-                            ev = json.loads(line_s)
-                            if ev.get("event") == "step_update":
-                                delta = ev.get("step_update", {}).get("text_delta", "")
-                                if delta:
-                                    self.stream_signal.emit(agent_id, "OUTPUT", delta)
-                                continue
-                            elif ev.get("event") == "result":
-                                res = ev.get("result", {})
-                                captured_usage = res.get("usage", {})
-                                resp_text = res.get("response", "")
-                                if resp_text:
-                                    self.stream_signal.emit(agent_id, "OUTPUT", resp_text)
-                                continue
-                        except Exception:
-                            pass
+                    text_chunk, usage_delta = bridge.parse_stream_line(raw_line)
+                    if text_chunk:
+                        self.stream_signal.emit(agent_id, "OUTPUT", text_chunk)
+                    if usage_delta:
+                        if captured_usage is None:
+                            captured_usage = {}
+                        captured_usage.update(usage_delta)
 
-                    self.stream_signal.emit(agent_id, "OUTPUT", raw_line)
                     lower = raw_line.lower()
                     if "writing" in lower or "creating" in lower or "executing" in lower:
                         self.progress_signal.emit(agent_id, 75)
@@ -656,12 +652,18 @@ class SubAgentWorker(QThread):
 
             if return_code == 0:
                 self.progress_signal.emit(agent_id, 100)
-                self.stream_signal.emit(agent_id, "SYSTEM", f"\n[SUCCESS] {self.config.name} successfully executed task via agy CLI ({elapsed_sec}s).\n")
-                
-                # Record real telemetry usage
+                self.stream_signal.emit(
+                    agent_id,
+                    "SYSTEM",
+                    f"\n[SUCCESS] {self.config.name} successfully executed task via {bridge.display_name} ({elapsed_sec}s).\n"
+                )
+
+                # Record real telemetry usage with cli_engine
                 if self.usage_tracker:
-                    in_tok = captured_usage.get("input_tokens", 11000) if captured_usage else 11000
-                    out_tok = captured_usage.get("output_tokens", 450) if captured_usage else 450
+                    fallback_in = 11000 if bridge.engine_id == "agy" else 150
+                    fallback_out = 450 if bridge.engine_id == "agy" else 80
+                    in_tok = captured_usage.get("input_tokens", fallback_in) if captured_usage else fallback_in
+                    out_tok = captured_usage.get("output_tokens", fallback_out) if captured_usage else fallback_out
                     thk_tok = captured_usage.get("thinking_tokens", 0) if captured_usage else 0
                     self.usage_tracker.record_usage(
                         agent_id=agent_id,
@@ -671,22 +673,23 @@ class SubAgentWorker(QThread):
                         input_tokens=in_tok,
                         output_tokens=out_tok,
                         thinking_tokens=thk_tok,
-                        duration_sec=elapsed_sec
+                        duration_sec=elapsed_sec,
+                        cli_engine=bridge.engine_id
                     )
 
                 # Dispatch packet to message bus
-                summary_msg = f"{self.config.name} completed real code generation via agy CLI."
+                summary_msg = f"{self.config.name} completed real task execution via {bridge.display_name}."
                 self._dispatch_structured_packet(
                     intent="TASK_DISPATCH" if self.config.role == AgentRole.LEADER else "APPROVAL_NOTICE",
-                    to_agent="all",
+                    to_agent="ALL",
                     payload=summary_msg,
                     scope_files=[]
                 )
             else:
-                self.stream_signal.emit(agent_id, "SYSTEM", f"\n[ERROR] agy CLI process exited with code {return_code}\n")
+                self.stream_signal.emit(agent_id, "SYSTEM", f"\n[ERROR] {bridge.display_name} process exited with code {return_code}\n")
 
         except Exception as exc:
-            self.stream_signal.emit(agent_id, "SYSTEM", f"\n[EXCEPTION] Failed to run agy CLI: {exc}\n")
+            self.stream_signal.emit(agent_id, "SYSTEM", f"\n[EXCEPTION] Failed to run {bridge.display_name}: {exc}\n")
 
     # --- Role-Specific Execution Flows ---
 
@@ -739,7 +742,8 @@ class SubAgentWorker(QThread):
         if self.usage_tracker:
             self.usage_tracker.record_usage(
                 self.config.agent_id, self.config.name, self.config.avatar, self.config.model,
-                input_tokens=850, output_tokens=240, thinking_tokens=80, duration_sec=0.4
+                input_tokens=850, output_tokens=240, thinking_tokens=80, duration_sec=0.4,
+                cli_engine=self.config.cli_engine
             )
         self._stream_text("OUTPUT", "Leader successfully orchestrated task delegation to Dev 1 and Dev 2.")
 
@@ -779,7 +783,8 @@ class SubAgentWorker(QThread):
         if self.usage_tracker:
             self.usage_tracker.record_usage(
                 self.config.agent_id, self.config.name, self.config.avatar, self.config.model,
-                input_tokens=1420, output_tokens=580, thinking_tokens=40, duration_sec=0.5
+                input_tokens=1420, output_tokens=580, thinking_tokens=40, duration_sec=0.5,
+                cli_engine=self.config.cli_engine
             )
         self._stream_text("OUTPUT", "UI implementation ready. Submitted for peer-review.")
 
@@ -819,7 +824,8 @@ class SubAgentWorker(QThread):
         if self.usage_tracker:
             self.usage_tracker.record_usage(
                 self.config.agent_id, self.config.name, self.config.avatar, self.config.model,
-                input_tokens=1550, output_tokens=690, thinking_tokens=160, duration_sec=0.6
+                input_tokens=1550, output_tokens=690, thinking_tokens=160, duration_sec=0.6,
+                cli_engine=self.config.cli_engine
             )
         self._stream_text("OUTPUT", "Core concurrency modules built. Handoff to Reviewer.")
 
@@ -857,7 +863,8 @@ class SubAgentWorker(QThread):
         if self.usage_tracker:
             self.usage_tracker.record_usage(
                 self.config.agent_id, self.config.name, self.config.avatar, self.config.model,
-                input_tokens=2100, output_tokens=420, thinking_tokens=220, duration_sec=0.5
+                input_tokens=2100, output_tokens=420, thinking_tokens=220, duration_sec=0.5,
+                cli_engine=self.config.cli_engine
             )
         self._stream_text("OUTPUT", "Review completed successfully. Passed gate to Runtime Tester.")
 
@@ -921,7 +928,8 @@ class SubAgentWorker(QThread):
         if self.usage_tracker:
             self.usage_tracker.record_usage(
                 self.config.agent_id, self.config.name, self.config.avatar, self.config.model,
-                input_tokens=1800, output_tokens=860, thinking_tokens=110, duration_sec=0.7
+                input_tokens=1800, output_tokens=860, thinking_tokens=110, duration_sec=0.7,
+                cli_engine=self.config.cli_engine
             )
         self._stream_text("OUTPUT", f"QA sign-off granted: 0 console errors, unit & Playwright E2E tests verified via MCP.\nDetailed QA Report saved to: {report_path}")
 
@@ -1351,11 +1359,19 @@ class AgentOrchestrator(QObject):
     def get_default_configs(self) -> List[SubAgentConfig]:
         return self.get_department_configs(self.active_department_id)
 
-    def update_agent_params(self, agent_id: str, new_model: str, new_effort: str) -> None:
-        """Dynamically update model and thinking effort of an agent."""
+    def update_agent_params(self, agent_id: str, new_model: str, new_effort: str, new_engine: Optional[str] = None) -> None:
+        """Dynamically update model, thinking effort, and CLI engine of an agent."""
         if agent_id in self.workers:
             self.workers[agent_id].config.model = new_model
             self.workers[agent_id].config.thinking_level = new_effort
+            if new_engine:
+                self.workers[agent_id].config.cli_engine = new_engine
+        for cfg in self.get_default_configs():
+            if cfg.agent_id == agent_id:
+                cfg.model = new_model
+                cfg.thinking_level = new_effort
+                if new_engine:
+                    cfg.cli_engine = new_engine
 
     def dispatch_hierarchical_pipeline(self, task_prompt: str) -> None:
         """Start hierarchical pipeline flow: Leader/Director -> Parallel Devs -> Reviewer -> Tester/Render QA."""

@@ -14,6 +14,7 @@ class AgentUsageStats:
     name: str
     avatar: str
     model: str
+    cli_engine: str = "agy"
     calls_count: int = 0
     input_tokens: int = 0
     output_tokens: int = 0
@@ -113,6 +114,10 @@ class UsageTracker(QObject):
         self.total_duration_sec: float = 0.0
         self.agent_stats: Dict[str, AgentUsageStats] = {}
         self.model_stats: Dict[str, int] = {}  # model_name -> total_tokens
+        self.cli_stats: Dict[str, Dict[str, Any]] = {
+            "agy": {"calls_count": 0, "input_tokens": 0, "output_tokens": 0, "thinking_tokens": 0, "total_tokens": 0, "total_duration_sec": 0.0},
+            "ollama": {"calls_count": 0, "input_tokens": 0, "output_tokens": 0, "thinking_tokens": 0, "total_tokens": 0, "total_duration_sec": 0.0},
+        }
 
         self._load()
 
@@ -135,7 +140,8 @@ class UsageTracker(QObject):
         input_tokens: int,
         output_tokens: int,
         thinking_tokens: int = 0,
-        duration_sec: float = 0.0
+        duration_sec: float = 0.0,
+        cli_engine: str = "agy"
     ) -> None:
         """Record tokens and execution stats for a specific subagent turn."""
         turn_total = input_tokens + output_tokens + thinking_tokens
@@ -147,13 +153,33 @@ class UsageTracker(QObject):
         self.cli_invocations += 1
         self.total_duration_sec += duration_sec
 
+        # Update per-CLI statistics
+        cli_key = (cli_engine or "agy").lower().strip()
+        if cli_key not in self.cli_stats:
+            self.cli_stats[cli_key] = {
+                "calls_count": 0,
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "thinking_tokens": 0,
+                "total_tokens": 0,
+                "total_duration_sec": 0.0
+            }
+        cs = self.cli_stats[cli_key]
+        cs["calls_count"] += 1
+        cs["input_tokens"] += input_tokens
+        cs["output_tokens"] += output_tokens
+        cs["thinking_tokens"] += thinking_tokens
+        cs["total_tokens"] += turn_total
+        cs["total_duration_sec"] = round(cs["total_duration_sec"] + duration_sec, 2)
+
         # Update per-agent record
         if agent_id not in self.agent_stats:
             self.agent_stats[agent_id] = AgentUsageStats(
                 agent_id=agent_id,
                 name=name,
                 avatar=avatar,
-                model=model
+                model=model,
+                cli_engine=cli_key
             )
 
         agent = self.agent_stats[agent_id]
@@ -164,6 +190,7 @@ class UsageTracker(QObject):
         agent.total_tokens += turn_total
         agent.last_latency_sec = round(duration_sec, 2)
         agent.model = model
+        agent.cli_engine = cli_key
         agent.last_updated = time.strftime("%H:%M:%S")
 
         # Update per-model consumption
@@ -182,6 +209,7 @@ class UsageTracker(QObject):
             "cli_invocations": self.cli_invocations,
             "total_duration_sec": round(self.total_duration_sec, 2),
             "model_stats": dict(self.model_stats),
+            "cli_stats": {k: dict(v) for k, v in self.cli_stats.items()},
             "agents": {aid: asdict(stats) for aid, stats in self.agent_stats.items()}
         }
 
@@ -195,6 +223,10 @@ class UsageTracker(QObject):
         self.total_duration_sec = 0.0
         self.agent_stats.clear()
         self.model_stats.clear()
+        self.cli_stats = {
+            "agy": {"calls_count": 0, "input_tokens": 0, "output_tokens": 0, "thinking_tokens": 0, "total_tokens": 0, "total_duration_sec": 0.0},
+            "ollama": {"calls_count": 0, "input_tokens": 0, "output_tokens": 0, "thinking_tokens": 0, "total_tokens": 0, "total_duration_sec": 0.0},
+        }
         self._save()
         self.usage_updated.emit(self.get_telemetry_snapshot())
 
@@ -223,9 +255,15 @@ class UsageTracker(QObject):
             self.cli_invocations = data.get("cli_invocations", 0)
             self.total_duration_sec = data.get("total_duration_sec", 0.0)
             self.model_stats = data.get("model_stats", {})
+            self.cli_stats = data.get("cli_stats", {
+                "agy": {"calls_count": 0, "input_tokens": 0, "output_tokens": 0, "thinking_tokens": 0, "total_tokens": 0, "total_duration_sec": 0.0},
+                "ollama": {"calls_count": 0, "input_tokens": 0, "output_tokens": 0, "thinking_tokens": 0, "total_tokens": 0, "total_duration_sec": 0.0},
+            })
 
             agents_data = data.get("agents", {})
+            valid_fields = set(AgentUsageStats.__dataclass_fields__.keys())
             for aid, a_dict in agents_data.items():
-                self.agent_stats[aid] = AgentUsageStats(**a_dict)
+                filtered = {k: v for k, v in a_dict.items() if k in valid_fields}
+                self.agent_stats[aid] = AgentUsageStats(**filtered)
         except (OSError, json.JSONDecodeError, TypeError):
             pass

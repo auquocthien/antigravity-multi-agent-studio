@@ -594,7 +594,7 @@ class TestHierarchicalArchitecture(unittest.TestCase):
         self.assertTrue(hasattr(window, "lbl_thinking_tokens"))
         self.assertTrue(hasattr(window, "lbl_total_calls"))
         self.assertTrue(hasattr(window, "tbl_usage"))
-        self.assertEqual(window.tbl_usage.columnCount(), 8)
+        self.assertEqual(window.tbl_usage.columnCount(), 9)
 
         # Simulate usage emission to verify UI updates
         orch.usage_tracker.record_usage(
@@ -621,6 +621,194 @@ class TestHierarchicalArchitecture(unittest.TestCase):
         if os.path.exists(temp_stats_file):
             os.remove(temp_stats_file)
 
+    def test_12_multi_cli_concurrency_and_dual_usage(self) -> None:
+        """Verify pluggable CLI registry, Ollama streaming parser, dual-CLI tracking, and parallel workers."""
+        from src.core.cli_engine import (
+            CliRegistry,
+            AgyCliBridge,
+            OllamaCliBridge,
+            CustomCliBridge,
+        )
+        from src.core.usage_tracker import UsageTracker
+
+        # 1. Test CLI Bridge Registry and Command Generation
+        bridge_agy = CliRegistry.get_bridge("agy")
+        bridge_ollama = CliRegistry.get_bridge("ollama")
+        bridge_custom = CliRegistry.get_bridge("custom")
+
+        self.assertIsInstance(bridge_agy, AgyCliBridge)
+        self.assertIsInstance(bridge_ollama, OllamaCliBridge)
+        self.assertIsInstance(bridge_custom, CustomCliBridge)
+
+        cmd_agy = bridge_agy.format_command(
+            target_agent="agent_dev_ui",
+            prompt="Build feature",
+            model="gemini-3.8-flash-medium",
+            thinking_level="medium"
+        )
+        self.assertIn("agy", cmd_agy[0])
+        self.assertIn("--output-format", cmd_agy)
+        self.assertIn("stream-json", cmd_agy)
+
+        cmd_ollama = bridge_ollama.format_command(
+            target_agent="agent_dev_core",
+            prompt="Refactor backend",
+            model="llama3.2:1b"
+        )
+        self.assertIn("ollama", cmd_ollama[0])
+        self.assertEqual(cmd_ollama[1], "run")
+        self.assertEqual(cmd_ollama[2], "llama3.2:1b")
+        self.assertIn("--verbose", cmd_ollama)
+
+        # 2. Test Ollama stream line parser
+        _, parsed_in = bridge_ollama.parse_stream_line("prompt eval count: 42 token(s)")
+        self.assertIsNotNone(parsed_in)
+        self.assertEqual(parsed_in.get("input_tokens"), 42)
+
+        _, parsed_out = bridge_ollama.parse_stream_line("eval count: 18 token(s)")
+        self.assertIsNotNone(parsed_out)
+        self.assertEqual(parsed_out.get("output_tokens"), 18)
+
+        parsed_text, _ = bridge_ollama.parse_stream_line("Hello from Ollama Llama 3.2!")
+        self.assertIsNotNone(parsed_text)
+        self.assertIn("Hello from Ollama", parsed_text)
+
+        # 3. Test Dual-CLI Usage Telemetry Isolation
+        temp_dual_stats = "/tmp/test_dual_usage.json"
+        if os.path.exists(temp_dual_stats):
+            os.remove(temp_dual_stats)
+
+        tracker = UsageTracker(persistence_file=temp_dual_stats)
+
+        # Record CLI 1: agy
+        tracker.record_usage(
+            agent_id="agent_dev_ui",
+            name="Sarah Chen",
+            avatar="💻",
+            model="gemini-3.8-flash-medium",
+            input_tokens=1200,
+            output_tokens=600,
+            thinking_tokens=200,
+            duration_sec=3.1,
+            cli_engine="agy"
+        )
+
+        # Record CLI 2: ollama
+        tracker.record_usage(
+            agent_id="agent_dev_core",
+            name="Marcus Brody",
+            avatar="⚙️",
+            model="llama3.2:1b",
+            input_tokens=850,
+            output_tokens=350,
+            thinking_tokens=0,
+            duration_sec=2.2,
+            cli_engine="ollama"
+        )
+
+        # Global totals
+        self.assertEqual(tracker.total_tokens, 3200)
+        self.assertEqual(tracker.input_tokens, 2050)
+        self.assertEqual(tracker.output_tokens, 950)
+        self.assertEqual(tracker.thinking_tokens, 200)
+        self.assertEqual(tracker.cli_invocations, 2)
+
+        # Per-CLI breakdown
+        self.assertIn("agy", tracker.cli_stats)
+        self.assertIn("ollama", tracker.cli_stats)
+        self.assertEqual(tracker.cli_stats["agy"]["total_tokens"], 2000)
+        self.assertEqual(tracker.cli_stats["agy"]["calls_count"], 1)
+        self.assertEqual(tracker.cli_stats["ollama"]["total_tokens"], 1200)
+        self.assertEqual(tracker.cli_stats["ollama"]["calls_count"], 1)
+
+        # Reload persistence check
+        reloaded = UsageTracker(persistence_file=temp_dual_stats)
+        self.assertEqual(reloaded.cli_stats["agy"]["total_tokens"], 2000)
+        self.assertEqual(reloaded.cli_stats["ollama"]["total_tokens"], 1200)
+
+        # 4. Test Multi-CLI Concurrent SubAgent Workers
+        cfg_agy = SubAgentConfig(
+            agent_id="agent_dev_ui",
+            name="Sarah Chen",
+            role=AgentRole.DEV_UI,
+            avatar="💻",
+            model="gemini-3.8-flash-medium",
+            cli_engine="agy"
+        )
+        cfg_ollama = SubAgentConfig(
+            agent_id="agent_dev_core",
+            name="Marcus Brody",
+            role=AgentRole.DEV_CORE,
+            avatar="⚙️",
+            model="llama3.2:1b",
+            cli_engine="ollama"
+        )
+
+        test_logger = HistoryLogger(base_dir="/tmp/test_dual_history")
+        worker_agy = SubAgentWorker(cfg_agy, "Design responsive layout", test_logger)
+        worker_ollama = SubAgentWorker(cfg_ollama, "Build concurrency locks", test_logger)
+
+        # Verify threads run in parallel without conflicts
+        worker_agy.start()
+        worker_ollama.start()
+        while worker_agy.isRunning() or worker_ollama.isRunning():
+            self.app.processEvents()
+
+        self.assertTrue(worker_agy.wait(3000))
+        self.assertTrue(worker_ollama.wait(3000))
+        self.assertTrue(worker_agy.isFinished())
+        self.assertTrue(worker_ollama.isFinished())
+
+        # 5. Test MainWindow UI Dual-CLI Telemetry & Matrix Bindings
+        orch = AgentOrchestrator(usage_tracker=reloaded)
+        window = MainWindow(orch)
+
+        # Verify Dual-CLI Comparison Cards
+        self.assertTrue(hasattr(window, "lbl_agy_total"))
+        self.assertTrue(hasattr(window, "lbl_ollama_total"))
+        self.assertIn("2,000", window.lbl_agy_total.text())
+        self.assertIn("1,200", window.lbl_ollama_total.text())
+
+        # Verify 9-column usage table with Engine column
+        self.assertEqual(window.tbl_usage.columnCount(), 9)
+        self.assertEqual(window.tbl_usage.horizontalHeaderItem(1).text(), "Engine")
+
+        # Verify Engine badge text in table
+        found_agy = False
+        found_ollama = False
+        for row in range(window.tbl_usage.rowCount()):
+            item = window.tbl_usage.item(row, 1)
+            if item:
+                if "agy" in item.text():
+                    found_agy = True
+                if "ollama" in item.text():
+                    found_ollama = True
+        self.assertTrue(found_agy)
+        self.assertTrue(found_ollama)
+
+        # Verify Matrix row engine switching
+        row_widget = window.matrix_row_widgets[1]  # Slot 2 (agent_dev_ui)
+        combo_engine = row_widget["combo_engine"]
+        combo_model = row_widget["combo_model"]
+
+        # Switch slot 2 engine to ollama
+        ollama_idx = combo_engine.findData("ollama")
+        self.assertGreaterEqual(ollama_idx, 0)
+        combo_engine.setCurrentIndex(ollama_idx)
+        self.app.processEvents()
+
+        # Verify combo_model reloaded with ollama models
+        ollama_models = bridge_ollama.get_available_models()
+        for m in ollama_models:
+            self.assertGreaterEqual(combo_model.findText(m), 0)
+
+        window.close()
+        self.app.processEvents()
+
+        if os.path.exists(temp_dual_stats):
+            os.remove(temp_dual_stats)
+
 
 if __name__ == "__main__":
     unittest.main()
+

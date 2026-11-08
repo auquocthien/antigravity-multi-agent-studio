@@ -34,6 +34,7 @@ from PyQt6.QtWidgets import (
 )
 
 from src.core.engine import AgentOrchestrator, StandardMessagePacket, SubAgentConfig, AgyCliBridge, CustomizationDiscovery
+from src.core.cli_engine import CliRegistry
 from src.core.report_generator import QAReportGenerator
 from src.ui.tree_node import CompactAgentNodeWidget
 
@@ -1044,12 +1045,13 @@ class MainWindow(QMainWindow):
 
         # Column stretch factors for optimal alignment
         matrix_layout.setColumnStretch(0, 3)  # Agent Role / Name
-        matrix_layout.setColumnStretch(1, 3)  # LLM Model Selector
-        matrix_layout.setColumnStretch(2, 2)  # Budget / Thinking Level
-        matrix_layout.setColumnStretch(3, 3)  # Persona file & Actions
+        matrix_layout.setColumnStretch(1, 2)  # CLI Engine Selector
+        matrix_layout.setColumnStretch(2, 3)  # LLM Model Selector
+        matrix_layout.setColumnStretch(3, 2)  # Budget / Thinking Level
+        matrix_layout.setColumnStretch(4, 3)  # Persona file & Actions
 
         # Headers
-        headers = ["Agent", "Model", "Budget", "Persona (.md)"]
+        headers = ["Agent", "CLI Engine", "Model", "Budget", "Persona (.md)"]
         matrix_layout.setRowMinimumHeight(0, 26)
         for col, h in enumerate(headers):
             lbl_h = QLabel(h)
@@ -1064,6 +1066,13 @@ class MainWindow(QMainWindow):
             lbl_agent.setStyleSheet("font-size: 12px; font-weight: 600; color: #F9FAFB;")
             matrix_layout.addWidget(lbl_agent, row_idx + 1, 0)
 
+            combo_engine = QComboBox()
+            combo_engine.setFixedHeight(34)
+            combo_engine.addItem("⚡ agy", "agy")
+            combo_engine.addItem("🦙 ollama", "ollama")
+            combo_engine.addItem("🔧 custom", "custom")
+            combo_engine.currentIndexChanged.connect(lambda _, idx=row_idx: self._on_engine_changed(idx))
+
             combo_model = QComboBox()
             combo_model.setFixedHeight(34)
             combo_model.addItems(self.available_models)
@@ -1074,8 +1083,9 @@ class MainWindow(QMainWindow):
             combo_thinking.addItems(THINKING_LEVELS)
             combo_thinking.currentIndexChanged.connect(lambda _, idx=row_idx: self._sync_config_slot(idx))
 
-            matrix_layout.addWidget(combo_model, row_idx + 1, 1)
-            matrix_layout.addWidget(combo_thinking, row_idx + 1, 2)
+            matrix_layout.addWidget(combo_engine, row_idx + 1, 1)
+            matrix_layout.addWidget(combo_model, row_idx + 1, 2)
+            matrix_layout.addWidget(combo_thinking, row_idx + 1, 3)
 
             persona_col = QWidget()
             persona_col.setFixedHeight(34)
@@ -1127,10 +1137,11 @@ class MainWindow(QMainWindow):
             btn_edit.clicked.connect(lambda _, idx=row_idx: self._edit_persona_slot(idx))
             persona_box.addWidget(btn_edit)
 
-            matrix_layout.addWidget(persona_col, row_idx + 1, 3)
+            matrix_layout.addWidget(persona_col, row_idx + 1, 4)
 
             self.matrix_row_widgets.append({
                 "lbl_agent": lbl_agent,
+                "combo_engine": combo_engine,
                 "combo_model": combo_model,
                 "combo_thinking": combo_thinking,
                 "lbl_persona": lbl_persona,
@@ -1266,12 +1277,26 @@ class MainWindow(QMainWindow):
             w = self.matrix_row_widgets[idx]
             w["lbl_agent"].setText(f"{cfg.avatar}  <b>{cfg.name}</b> <span style='color: #9CA3AF;'>({cfg.role.value.split(':')[0]})</span>")
 
+            w["combo_engine"].blockSignals(True)
             w["combo_model"].blockSignals(True)
             w["combo_thinking"].blockSignals(True)
 
-            matched_model = next((m for m in self.available_models if cfg.model.lower() in m.lower()), None)
+            # Set CLI Engine selection
+            engine_idx = w["combo_engine"].findData(cfg.cli_engine)
+            if engine_idx >= 0:
+                w["combo_engine"].setCurrentIndex(engine_idx)
+            else:
+                w["combo_engine"].setCurrentIndex(0)
+
+            # Populate models available for this specific CLI engine
+            bridge = CliRegistry.get_bridge(cfg.cli_engine)
+            engine_models = bridge.get_available_models()
+            w["combo_model"].clear()
+            w["combo_model"].addItems(engine_models)
+
+            matched_model = next((m for m in engine_models if cfg.model.lower() in m.lower()), None)
             if not matched_model:
-                matched_model = self.available_models[0]
+                matched_model = engine_models[0]
             w["combo_model"].setCurrentText(matched_model)
             cfg.model = matched_model
 
@@ -1282,6 +1307,7 @@ class MainWindow(QMainWindow):
             else:
                 w["combo_thinking"].setCurrentText("Medium (4k)")
 
+            w["combo_engine"].blockSignals(False)
             w["combo_model"].blockSignals(False)
             w["combo_thinking"].blockSignals(False)
 
@@ -1290,6 +1316,7 @@ class MainWindow(QMainWindow):
             w["lbl_persona"].setToolTip(cfg.persona_file if cfg.persona_file else "No custom persona loaded")
 
             self.config_combos[cfg.agent_id] = {
+                "engine": w["combo_engine"],
                 "model": w["combo_model"],
                 "thinking": w["combo_thinking"]
             }
@@ -1437,6 +1464,72 @@ class MainWindow(QMainWindow):
         token_layout.addLayout(cards_layout)
         layout.addWidget(token_group)
 
+        # === 2.5 Dual-CLI Engine Comparison Cards ===
+        cli_group = QGroupBox("⚔️ Dual-CLI Engine Telemetry (⚡ agy vs 🦙 ollama / custom)")
+        cli_layout = QHBoxLayout(cli_group)
+        cli_layout.setContentsMargins(14, 12, 14, 12)
+        cli_layout.setSpacing(12)
+
+        def create_cli_card(title: str, total_lbl: QLabel, calls_lbl: QLabel, io_lbl: QLabel, border_color: str) -> QFrame:
+            card = QFrame()
+            card.setStyleSheet(f"""
+                QFrame {{
+                    background-color: #111827;
+                    border: 1px solid {border_color};
+                    border-radius: 8px;
+                    padding: 8px;
+                }}
+            """)
+            c_vbox = QVBoxLayout(card)
+            c_vbox.setContentsMargins(10, 8, 10, 8)
+            c_vbox.setSpacing(6)
+
+            lbl_t = QLabel(title)
+            lbl_t.setStyleSheet(f"color: {border_color}; font-size: 13px; font-weight: 700;")
+            c_vbox.addWidget(lbl_t)
+
+            row_tokens = QHBoxLayout()
+            lbl_tok_desc = QLabel("Total Tokens:")
+            lbl_tok_desc.setStyleSheet("color: #9CA3AF; font-size: 11px;")
+            total_lbl.setStyleSheet(f"color: {border_color}; font-size: 16px; font-weight: 800; font-family: 'JetBrains Mono', monospace;")
+            row_tokens.addWidget(lbl_tok_desc)
+            row_tokens.addStretch()
+            row_tokens.addWidget(total_lbl)
+            c_vbox.addLayout(row_tokens)
+
+            row_turns = QHBoxLayout()
+            lbl_turn_desc = QLabel("Sessions / Calls:")
+            lbl_turn_desc.setStyleSheet("color: #9CA3AF; font-size: 11px;")
+            calls_lbl.setStyleSheet("color: #E2E8F0; font-size: 12px; font-weight: 700; font-family: 'JetBrains Mono', monospace;")
+            row_turns.addWidget(lbl_turn_desc)
+            row_turns.addStretch()
+            row_turns.addWidget(calls_lbl)
+            c_vbox.addLayout(row_turns)
+
+            row_io = QHBoxLayout()
+            lbl_io_desc = QLabel("In / Out Split:")
+            lbl_io_desc.setStyleSheet("color: #9CA3AF; font-size: 11px;")
+            io_lbl.setStyleSheet("color: #94A3B8; font-size: 11px; font-family: 'JetBrains Mono', monospace;")
+            row_io.addWidget(lbl_io_desc)
+            row_io.addStretch()
+            row_io.addWidget(io_lbl)
+            c_vbox.addLayout(row_io)
+
+            return card
+
+        self.lbl_agy_total = QLabel("0")
+        self.lbl_agy_calls = QLabel("0")
+        self.lbl_agy_io = QLabel("0 in / 0 out")
+
+        self.lbl_ollama_total = QLabel("0")
+        self.lbl_ollama_calls = QLabel("0")
+        self.lbl_ollama_io = QLabel("0 in / 0 out")
+
+        cli_layout.addWidget(create_cli_card("⚡ agy (Google Gemini CLI)", self.lbl_agy_total, self.lbl_agy_calls, self.lbl_agy_io, "#38BDF8"))
+        cli_layout.addWidget(create_cli_card("🦙 ollama (Local Llama/Custom CLI)", self.lbl_ollama_total, self.lbl_ollama_calls, self.lbl_ollama_io, "#34D399"))
+
+        layout.addWidget(cli_group)
+
         # === 3. Sub-Agent Breakdown Table ===
         table_group = QGroupBox("🤖 Sub-Agent Token & Latency Breakdown")
         table_layout = QVBoxLayout(table_group)
@@ -1485,9 +1578,10 @@ class MainWindow(QMainWindow):
 
         # Table Widget
         self.tbl_usage = QTableWidget()
-        self.tbl_usage.setColumnCount(8)
+        self.tbl_usage.setColumnCount(9)
         self.tbl_usage.setHorizontalHeaderLabels([
             "Staff / Agent",
+            "Engine",
             "Model",
             "Turns",
             "Input Tokens",
@@ -1504,13 +1598,14 @@ class MainWindow(QMainWindow):
 
         header = self.tbl_usage.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
         header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
         header.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
         header.setSectionResizeMode(5, QHeaderView.ResizeMode.ResizeToContents)
         header.setSectionResizeMode(6, QHeaderView.ResizeMode.ResizeToContents)
         header.setSectionResizeMode(7, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(8, QHeaderView.ResizeMode.ResizeToContents)
 
         self.tbl_usage.setStyleSheet("""
             QTableWidget {
@@ -1594,6 +1689,24 @@ class MainWindow(QMainWindow):
         if 0 <= slot_idx < len(self.configs):
             self._select_detail_agent(self.configs[slot_idx].agent_id)
 
+    def _on_engine_changed(self, slot_idx: int) -> None:
+        """Handle CLI Engine switch for a specific agent slot."""
+        if not (0 <= slot_idx < len(self.matrix_row_widgets)):
+            return
+        w = self.matrix_row_widgets[slot_idx]
+        engine = w["combo_engine"].currentData() or "agy"
+        bridge = CliRegistry.get_bridge(engine)
+        models = bridge.get_available_models()
+
+        w["combo_model"].blockSignals(True)
+        w["combo_model"].clear()
+        w["combo_model"].addItems(models)
+        if models:
+            w["combo_model"].setCurrentIndex(0)
+        w["combo_model"].blockSignals(False)
+
+        self._sync_config_slot(slot_idx)
+
     def _sync_config_slot(self, slot_idx: int) -> None:
         if 0 <= slot_idx < len(self.configs):
             self._sync_config(self.configs[slot_idx].agent_id)
@@ -1640,19 +1753,24 @@ class MainWindow(QMainWindow):
             self.lbl_status.setText(f"Updated persona for {cfg.name}")
 
     def _sync_config(self, agent_id: str) -> None:
-        """Sync updated model or thinking from config tab into node card and engine."""
+        """Sync updated model, thinking, and CLI engine from config tab into node card and engine."""
         combos = self.config_combos.get(agent_id)
         if not combos:
             return
+        new_engine = combos["engine"].currentData() if "engine" in combos else "agy"
         new_model = combos["model"].currentText()
         raw_thinking = combos["thinking"].currentText()
         new_thinking = "low" if "Low" in raw_thinking else (
             "high" if "High" in raw_thinking else ("max" if "Max" in raw_thinking else "medium")
         )
 
+        cfg = next((c for c in self.configs if c.agent_id == agent_id), None)
+        if cfg:
+            cfg.cli_engine = new_engine
+
         if agent_id in self.node_widgets:
             self.node_widgets[agent_id].update_tags(new_model, new_thinking)
-        self.orchestrator.update_agent_params(agent_id, new_model, new_thinking)
+        self.orchestrator.update_agent_params(agent_id, new_model, new_thinking, new_engine=new_engine)
 
     def _apply_config_and_return(self) -> None:
         prompt_text = self.edit_prompt.text().strip()
@@ -2045,7 +2163,20 @@ class MainWindow(QMainWindow):
         self.lbl_thinking_tokens.setText(f"{think_tok:,}")
         self.lbl_total_calls.setText(f"{calls:,}")
 
-        # Update Table Rows
+        # Update Dual-CLI Engine Telemetry Cards
+        cli_stats = snapshot.get("cli_stats", {})
+        if hasattr(self, "lbl_agy_total") and hasattr(self, "lbl_ollama_total"):
+            agy_stat = cli_stats.get("agy", {})
+            self.lbl_agy_total.setText(f"{agy_stat.get('total_tokens', 0):,}")
+            self.lbl_agy_calls.setText(f"{agy_stat.get('calls_count', 0):,}")
+            self.lbl_agy_io.setText(f"{agy_stat.get('input_tokens', 0):,} in / {agy_stat.get('output_tokens', 0):,} out")
+
+            ollama_stat = cli_stats.get("ollama", {})
+            self.lbl_ollama_total.setText(f"{ollama_stat.get('total_tokens', 0):,}")
+            self.lbl_ollama_calls.setText(f"{ollama_stat.get('calls_count', 0):,}")
+            self.lbl_ollama_io.setText(f"{ollama_stat.get('input_tokens', 0):,} in / {ollama_stat.get('output_tokens', 0):,} out")
+
+        # Update Table Rows (9 columns)
         agents_data = snapshot.get("agents", {})
         all_agent_ids = list(dict.fromkeys([cfg.agent_id for cfg in self.configs] + list(agents_data.keys())))
 
@@ -2056,6 +2187,7 @@ class MainWindow(QMainWindow):
 
             avatar = stat.get("avatar") or (cfg.avatar if cfg else "🤖")
             name = stat.get("name") or (cfg.name if cfg else aid)
+            engine = stat.get("cli_engine") or (cfg.cli_engine if cfg else "agy")
             model = stat.get("model") or (cfg.model if cfg else "-")
             turns = stat.get("calls_count", 0)
             in_t = stat.get("input_tokens", 0)
@@ -2069,45 +2201,52 @@ class MainWindow(QMainWindow):
             it_name.setToolTip(f"ID: {aid}")
             self.tbl_usage.setItem(row, 0, it_name)
 
-            # Column 1: Model
+            # Column 1: Engine Badge
+            engine_text = f"⚡ {engine}" if engine == "agy" else (f"🦙 {engine}" if engine == "ollama" else f"🔧 {engine}")
+            it_eng = QTableWidgetItem(engine_text)
+            it_eng.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            it_eng.setForeground(QColor("#38BDF8" if engine == "agy" else ("#34D399" if engine == "ollama" else "#F59E0B")))
+            self.tbl_usage.setItem(row, 1, it_eng)
+
+            # Column 2: Model
             it_model = QTableWidgetItem(model)
             it_model.setForeground(QColor("#94A3B8"))
-            self.tbl_usage.setItem(row, 1, it_model)
+            self.tbl_usage.setItem(row, 2, it_model)
 
-            # Column 2: Turns
+            # Column 3: Turns
             it_turns = QTableWidgetItem(str(turns))
             it_turns.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-            self.tbl_usage.setItem(row, 2, it_turns)
+            self.tbl_usage.setItem(row, 3, it_turns)
 
-            # Column 3: Input Tokens
+            # Column 4: Input Tokens
             it_in = QTableWidgetItem(f"{in_t:,}")
             it_in.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
             it_in.setForeground(QColor("#A78BFA"))
-            self.tbl_usage.setItem(row, 3, it_in)
+            self.tbl_usage.setItem(row, 4, it_in)
 
-            # Column 4: Output Tokens
+            # Column 5: Output Tokens
             it_out = QTableWidgetItem(f"{out_t:,}")
             it_out.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
             it_out.setForeground(QColor("#34D399"))
-            self.tbl_usage.setItem(row, 4, it_out)
+            self.tbl_usage.setItem(row, 5, it_out)
 
-            # Column 5: Thinking
+            # Column 6: Thinking
             it_think = QTableWidgetItem(f"{th_t:,}")
             it_think.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
             it_think.setForeground(QColor("#F59E0B"))
-            self.tbl_usage.setItem(row, 5, it_think)
+            self.tbl_usage.setItem(row, 6, it_think)
 
-            # Column 6: Total Tokens
+            # Column 7: Total Tokens
             it_tot = QTableWidgetItem(f"{tot_t:,}")
             it_tot.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
             it_tot.setForeground(QColor("#38BDF8"))
-            self.tbl_usage.setItem(row, 6, it_tot)
+            self.tbl_usage.setItem(row, 7, it_tot)
 
-            # Column 7: Latency
+            # Column 8: Latency
             lat_str = f"{latency:.2f}s" if latency > 0 else "-"
             it_lat = QTableWidgetItem(lat_str)
             it_lat.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-            self.tbl_usage.setItem(row, 7, it_lat)
+            self.tbl_usage.setItem(row, 8, it_lat)
 
     def _refresh_usage_stats(self) -> None:
         """Manually refresh usage stats snapshot and table."""
