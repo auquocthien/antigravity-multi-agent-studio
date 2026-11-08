@@ -384,7 +384,10 @@ QGroupBox {
 QGroupBox::title {
     subcontrol-origin: margin;
     subcontrol-position: top left;
-    padding: 0 8px;
+    left: 12px;
+    padding: 2px 8px;
+    background-color: #111827;
+    border-radius: 4px;
 }
 
 QLineEdit, QTextEdit, QComboBox {
