@@ -241,6 +241,27 @@ class TestHierarchicalArchitecture(unittest.TestCase):
         self.assertIn("playwright-automation", window.lbl_detail_skills.text())
         self.assertIn("chrome-devtools", window.lbl_detail_skills.text())
 
+        # Verify ClickOnlyComboBox behavior: ignore wheel events to prevent touchpad accidental switching
+        from src.ui.main_window import ClickOnlyComboBox
+        from PyQt6.QtGui import QWheelEvent
+        from PyQt6.QtCore import QPointF, QPoint
+
+        self.assertIsInstance(window.combo_department, ClickOnlyComboBox)
+        for row_w in window.matrix_row_widgets:
+            self.assertIsInstance(row_w["combo_engine"], ClickOnlyComboBox)
+            self.assertIsInstance(row_w["combo_model"], ClickOnlyComboBox)
+            self.assertIsInstance(row_w["combo_thinking"], ClickOnlyComboBox)
+
+        # Simulate touchpad scroll on department combobox
+        orig_dept_idx = window.combo_department.currentIndex()
+        wheel_ev = QWheelEvent(
+            QPointF(10, 10), QPointF(10, 10), QPoint(0, 0), QPoint(0, -120),
+            Qt.MouseButton.NoButton, Qt.KeyboardModifier.NoModifier, Qt.ScrollPhase.NoScrollPhase, False
+        )
+        window.combo_department.wheelEvent(wheel_ev)
+        self.assertFalse(wheel_ev.isAccepted())
+        self.assertEqual(window.combo_department.currentIndex(), orig_dept_idx)
+
         window.close()
         self.app.processEvents()
 

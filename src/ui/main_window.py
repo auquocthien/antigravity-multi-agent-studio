@@ -4,7 +4,7 @@ import os
 import subprocess
 from typing import Dict, List, Optional
 from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QCloseEvent, QTextCursor, QPainter, QPen, QColor
+from PyQt6.QtGui import QCloseEvent, QTextCursor, QPainter, QPen, QColor, QWheelEvent
 from PyQt6.QtWidgets import (
     QApplication,
     QMainWindow,
@@ -37,6 +37,20 @@ from src.core.engine import AgentOrchestrator, StandardMessagePacket, SubAgentCo
 from src.core.cli_engine import CliRegistry, AgyInstance2Config, AgyInstance2CliBridge
 from src.core.report_generator import QAReportGenerator
 from src.ui.tree_node import CompactAgentNodeWidget
+
+
+class ClickOnlyComboBox(QComboBox):
+    """Custom QComboBox that responds only to click events for opening and selection.
+    Ignores mouse wheel and touchpad scroll events when the dropdown is closed,
+    allowing smooth page scrolling without accidentally changing dropdown values."""
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+
+    def wheelEvent(self, event: QWheelEvent) -> None:
+        # Ignore mouse wheel / touchpad scroll so it propagates to parent scroll areas
+        event.ignore()
 
 
 class PipelineLineConnector(QWidget):
@@ -577,7 +591,7 @@ class MainWindow(QMainWindow):
         lbl_dept_title.setStyleSheet("font-size: 13px; color: #F9FAFB;")
         dept_layout.addWidget(lbl_dept_title)
 
-        self.combo_department = QComboBox()
+        self.combo_department = ClickOnlyComboBox()
         self.combo_department.setFixedHeight(30)
         self.combo_department.setStyleSheet("""
             QComboBox {
@@ -1092,7 +1106,7 @@ class MainWindow(QMainWindow):
             lbl_agent.setStyleSheet("font-size: 12px; font-weight: 600; color: #F9FAFB;")
             matrix_layout.addWidget(lbl_agent, row_idx + 1, 0)
 
-            combo_engine = QComboBox()
+            combo_engine = ClickOnlyComboBox()
             combo_engine.setFixedHeight(34)
             combo_engine.addItem("⚡ agy", "agy")
             combo_engine.addItem("🚀 agy_2", "agy_instance_2")
@@ -1100,12 +1114,12 @@ class MainWindow(QMainWindow):
             combo_engine.addItem("🔧 custom", "custom")
             combo_engine.currentIndexChanged.connect(lambda _, idx=row_idx: self._on_engine_changed(idx))
 
-            combo_model = QComboBox()
+            combo_model = ClickOnlyComboBox()
             combo_model.setFixedHeight(34)
             combo_model.addItems(self.available_models)
             combo_model.currentIndexChanged.connect(lambda _, idx=row_idx: self._sync_config_slot(idx))
 
-            combo_thinking = QComboBox()
+            combo_thinking = ClickOnlyComboBox()
             combo_thinking.setFixedHeight(34)
             combo_thinking.addItems(THINKING_LEVELS)
             combo_thinking.currentIndexChanged.connect(lambda _, idx=row_idx: self._sync_config_slot(idx))
