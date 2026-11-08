@@ -1,0 +1,41 @@
+{
+  "total_tokens": 6380,
+  "input_tokens": 4400,
+  "output_tokens": 1460,
+  "thinking_tokens": 520,
+  "cli_invocations": 5,
+  "total_duration_sec": 4.0,
+  "model_stats": {
+    "Gemini 3.1 Pro": 4680,
+    "gemini-3.8-flash-high": 1700
+  },
+  "agents": {
+    "agent_leader": {
+      "agent_id": "agent_leader",
+      "name": "Leader / Architect",
+      "avatar": "\ud83d\udc51",
+      "model": "Gemini 3.1 Pro",
+      "calls_count": 4,
+      "input_tokens": 3400,
+      "output_tokens": 960,
+      "thinking_tokens": 320,
+      "total_tokens": 4680,
+      "last_latency_sec": 0.4,
+      "last_updated": "03:38:55"
+    },
+    "agent_dev_ui": {
+      "agent_id": "agent_dev_ui",
+      "name": "Sarah Chen",
+      "avatar": "\ud83d\udcbb",
+      "model": "gemini-3.8-flash-high",
+      "calls_count": 1,
+      "input_tokens": 1000,
+      "output_tokens": 500,
+      "thinking_tokens": 200,
+      "total_tokens": 1700,
+      "last_latency_sec": 2.4,
+      "last_updated": "03:37:44"
+    }
+  },
+  "last_saved": "2026-11-08 03:38:55"
+}

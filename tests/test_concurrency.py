@@ -522,6 +522,105 @@ class TestHierarchicalArchitecture(unittest.TestCase):
         window.close()
         self.app.processEvents()
 
+    def test_11_usage_tracker_and_system_metrics(self) -> None:
+        """Verify UsageTracker telemetry recording, /proc resource monitoring, and UI Tab 4."""
+        from src.core.usage_tracker import SystemResourceMonitor, UsageTracker
+
+        # 1. Test SystemResourceMonitor POSIX /proc reading
+        cpu = SystemResourceMonitor.get_cpu_percent()
+        self.assertIsInstance(cpu, float)
+        self.assertGreaterEqual(cpu, 0.0)
+
+        mem = SystemResourceMonitor.get_memory_info()
+        self.assertIn("total_mb", mem)
+        self.assertIn("used_mb", mem)
+        self.assertIn("percent", mem)
+        self.assertGreater(mem["total_mb"], 0)
+        self.assertGreaterEqual(mem["percent"], 0.0)
+
+        # 2. Test UsageTracker token recording & JSON persistence
+        temp_stats_file = "/tmp/test_usage_stats.json"
+        if os.path.exists(temp_stats_file):
+            os.remove(temp_stats_file)
+
+        tracker = UsageTracker(persistence_file=temp_stats_file)
+        usage_emissions = []
+        tracker.usage_updated.connect(lambda snap: usage_emissions.append(snap))
+
+        tracker.record_usage(
+            agent_id="agent_leader",
+            name="Alexander Vance",
+            avatar="👔",
+            model="Gemini 3.8 Flash",
+            input_tokens=150,
+            output_tokens=220,
+            thinking_tokens=50,
+            duration_sec=1.5
+        )
+
+        self.assertEqual(tracker.total_tokens, 420)
+        self.assertEqual(tracker.input_tokens, 150)
+        self.assertEqual(tracker.output_tokens, 220)
+        self.assertEqual(tracker.thinking_tokens, 50)
+        self.assertEqual(tracker.cli_invocations, 1)
+        self.assertEqual(len(usage_emissions), 1)
+        self.assertTrue(os.path.exists(temp_stats_file))
+
+        # Test reload from file
+        reloaded = UsageTracker(persistence_file=temp_stats_file)
+        self.assertEqual(reloaded.total_tokens, 420)
+        self.assertIn("agent_leader", reloaded.agent_stats)
+        self.assertEqual(reloaded.agent_stats["agent_leader"].total_tokens, 420)
+
+        # Test reset
+        reloaded.reset_stats()
+        self.assertEqual(reloaded.total_tokens, 0)
+        self.assertEqual(len(reloaded.agent_stats), 0)
+
+        # 3. Test MainWindow Tab 4 Setup & Signal Binding with isolated tracker
+        orch = AgentOrchestrator(usage_tracker=reloaded)
+        window = MainWindow(orch)
+
+        # Tab check
+        self.assertEqual(window.tabs.count(), 4)
+        self.assertEqual(window.tabs.tabText(3), "📊 Usage")
+
+        # Widget presence
+        self.assertTrue(hasattr(window, "bar_cpu"))
+        self.assertTrue(hasattr(window, "bar_ram"))
+        self.assertTrue(hasattr(window, "lbl_total_tokens"))
+        self.assertTrue(hasattr(window, "lbl_input_tokens"))
+        self.assertTrue(hasattr(window, "lbl_output_tokens"))
+        self.assertTrue(hasattr(window, "lbl_thinking_tokens"))
+        self.assertTrue(hasattr(window, "lbl_total_calls"))
+        self.assertTrue(hasattr(window, "tbl_usage"))
+        self.assertEqual(window.tbl_usage.columnCount(), 8)
+
+        # Simulate usage emission to verify UI updates
+        orch.usage_tracker.record_usage(
+            agent_id="agent_dev_ui",
+            name="Sarah Chen",
+            avatar="💻",
+            model="gemini-3.8-flash-high",
+            input_tokens=1000,
+            output_tokens=500,
+            thinking_tokens=200,
+            duration_sec=2.4
+        )
+        self.app.processEvents()
+
+        self.assertIn("1,700", window.lbl_total_tokens.text())
+        self.assertIn("1,000", window.lbl_input_tokens.text())
+        self.assertIn("500", window.lbl_output_tokens.text())
+        self.assertIn("200", window.lbl_thinking_tokens.text())
+        self.assertGreaterEqual(window.tbl_usage.rowCount(), 1)
+
+        window.close()
+        self.app.processEvents()
+
+        if os.path.exists(temp_stats_file):
+            os.remove(temp_stats_file)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -27,6 +27,10 @@ from PyQt6.QtWidgets import (
     QGridLayout,
     QScrollArea,
     QCheckBox,
+    QProgressBar,
+    QTableWidget,
+    QTableWidgetItem,
+    QHeaderView,
 )
 
 from src.core.engine import AgentOrchestrator, StandardMessagePacket, SubAgentConfig, AgyCliBridge, CustomizationDiscovery
@@ -621,6 +625,11 @@ class MainWindow(QMainWindow):
         tab_config = QWidget()
         self._setup_tab_config(tab_config)
         self.tabs.addTab(tab_config, "⚙️ Settings")
+
+        # --- Tab 4: Usage & System Resource Monitor ---
+        tab_usage = QWidget()
+        self._setup_tab_usage(tab_usage)
+        self.tabs.addTab(tab_usage, "📊 Usage")
 
         # Status Bar
         self.status_bar = QStatusBar()
@@ -1283,6 +1292,255 @@ class MainWindow(QMainWindow):
             }
             self.config_personas[cfg.agent_id] = w["lbl_persona"]
 
+    def _setup_tab_usage(self, parent: QWidget) -> None:
+        """Tab 4: System Resource Monitor and LLM Token Usage Telemetry."""
+        outer_layout = QVBoxLayout(parent)
+        outer_layout.setContentsMargins(0, 0, 0, 0)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setStyleSheet("QScrollArea { background-color: transparent; border: none; }")
+
+        container = QWidget()
+        layout = QVBoxLayout(container)
+        layout.setContentsMargins(14, 14, 14, 14)
+        layout.setSpacing(14)
+        scroll.setWidget(container)
+        outer_layout.addWidget(scroll)
+
+        # === 1. System Resource Monitor Group ===
+        sys_group = QGroupBox("💻 Host System Resources (Linux /proc)")
+        sys_layout = QVBoxLayout(sys_group)
+        sys_layout.setContentsMargins(14, 12, 14, 12)
+        sys_layout.setSpacing(10)
+
+        sys_desc = QLabel("Real-time host CPU & Memory telemetry polled via POSIX /proc virtual filesystem")
+        sys_desc.setStyleSheet("color: #94A3B8; font-size: 11px; font-style: italic;")
+        sys_layout.addWidget(sys_desc)
+
+        metrics_grid = QGridLayout()
+        metrics_grid.setContentsMargins(0, 4, 0, 4)
+        metrics_grid.setSpacing(12)
+
+        # CPU Metric
+        lbl_cpu_title = QLabel("Host CPU Utilization:")
+        lbl_cpu_title.setStyleSheet("color: #E2E8F0; font-weight: 600; font-size: 12px;")
+        metrics_grid.addWidget(lbl_cpu_title, 0, 0)
+
+        self.lbl_cpu_val = QLabel("0.0%")
+        self.lbl_cpu_val.setStyleSheet("color: #38BDF8; font-weight: bold; font-size: 13px;")
+        metrics_grid.addWidget(self.lbl_cpu_val, 0, 1, Qt.AlignmentFlag.AlignRight)
+
+        self.bar_cpu = QProgressBar()
+        self.bar_cpu.setRange(0, 100)
+        self.bar_cpu.setValue(0)
+        self.bar_cpu.setFixedHeight(14)
+        self.bar_cpu.setTextVisible(False)
+        self.bar_cpu.setStyleSheet("""
+            QProgressBar {
+                border: 1px solid #1F2937;
+                border-radius: 4px;
+                background-color: #0B0F19;
+            }
+            QProgressBar::chunk {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #0284C7, stop:1 #38BDF8);
+                border-radius: 3px;
+            }
+        """)
+        metrics_grid.addWidget(self.bar_cpu, 1, 0, 1, 2)
+
+        # RAM Metric
+        lbl_ram_title = QLabel("System RAM Utilization:")
+        lbl_ram_title.setStyleSheet("color: #E2E8F0; font-weight: 600; font-size: 12px;")
+        metrics_grid.addWidget(lbl_ram_title, 0, 2)
+
+        self.lbl_ram_val = QLabel("0 MB / 0 MB (0.0%)")
+        self.lbl_ram_val.setStyleSheet("color: #34D399; font-weight: bold; font-size: 13px;")
+        metrics_grid.addWidget(self.lbl_ram_val, 0, 3, Qt.AlignmentFlag.AlignRight)
+
+        self.bar_ram = QProgressBar()
+        self.bar_ram.setRange(0, 100)
+        self.bar_ram.setValue(0)
+        self.bar_ram.setFixedHeight(14)
+        self.bar_ram.setTextVisible(False)
+        self.bar_ram.setStyleSheet("""
+            QProgressBar {
+                border: 1px solid #1F2937;
+                border-radius: 4px;
+                background-color: #0B0F19;
+            }
+            QProgressBar::chunk {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #059669, stop:1 #34D399);
+                border-radius: 3px;
+            }
+        """)
+        metrics_grid.addWidget(self.bar_ram, 1, 2, 1, 2)
+
+        sys_layout.addLayout(metrics_grid)
+        layout.addWidget(sys_group)
+
+        # === 2. Global Token Metrics Stat Cards ===
+        token_group = QGroupBox("📈 LLM Token Metrics & Autonomous CLI Sessions")
+        token_layout = QVBoxLayout(token_group)
+        token_layout.setContentsMargins(14, 12, 14, 12)
+        token_layout.setSpacing(10)
+
+        token_desc = QLabel("Aggregated metrics captured from agy CLI stream-json outputs across all staff")
+        token_desc.setStyleSheet("color: #94A3B8; font-size: 11px; font-style: italic;")
+        token_layout.addWidget(token_desc)
+
+        cards_layout = QHBoxLayout()
+        cards_layout.setSpacing(10)
+
+        def create_stat_card(icon_title: str, val_label: QLabel, sub_desc: str, color_hex: str) -> QFrame:
+            card = QFrame()
+            card.setStyleSheet("""
+                QFrame {
+                    background-color: #111827;
+                    border: 1px solid #1F2937;
+                    border-radius: 8px;
+                    padding: 6px;
+                }
+            """)
+            c_layout = QVBoxLayout(card)
+            c_layout.setContentsMargins(10, 8, 10, 8)
+            c_layout.setSpacing(4)
+
+            t_lbl = QLabel(icon_title)
+            t_lbl.setStyleSheet("color: #9CA3AF; font-size: 11px; font-weight: 600;")
+            c_layout.addWidget(t_lbl)
+
+            val_label.setStyleSheet(f"color: {color_hex}; font-size: 20px; font-weight: 800; font-family: 'JetBrains Mono', monospace;")
+            c_layout.addWidget(val_label)
+
+            d_lbl = QLabel(sub_desc)
+            d_lbl.setStyleSheet("color: #64748B; font-size: 10px;")
+            c_layout.addWidget(d_lbl)
+            return card
+
+        self.lbl_total_tokens = QLabel("0")
+        self.lbl_input_tokens = QLabel("0")
+        self.lbl_output_tokens = QLabel("0")
+        self.lbl_thinking_tokens = QLabel("0")
+        self.lbl_total_calls = QLabel("0")
+
+        cards_layout.addWidget(create_stat_card("⚡ Total Tokens", self.lbl_total_tokens, "Prompt + Gen + Think", "#38BDF8"))
+        cards_layout.addWidget(create_stat_card("📥 Input Tokens", self.lbl_input_tokens, "Context & Prompts", "#A78BFA"))
+        cards_layout.addWidget(create_stat_card("📤 Output Tokens", self.lbl_output_tokens, "Generated Responses", "#34D399"))
+        cards_layout.addWidget(create_stat_card("🧠 Thinking", self.lbl_thinking_tokens, "Reasoning & Deliberation", "#F59E0B"))
+        cards_layout.addWidget(create_stat_card("🔄 Turns Executed", self.lbl_total_calls, "Autonomous Sessions", "#E2E8F0"))
+
+        token_layout.addLayout(cards_layout)
+        layout.addWidget(token_group)
+
+        # === 3. Sub-Agent Breakdown Table ===
+        table_group = QGroupBox("🤖 Sub-Agent Token & Latency Breakdown")
+        table_layout = QVBoxLayout(table_group)
+        table_layout.setContentsMargins(14, 12, 14, 12)
+        table_layout.setSpacing(10)
+
+        # Table Action Toolbar
+        action_bar = QHBoxLayout()
+        action_bar.setSpacing(8)
+
+        lbl_tbl_info = QLabel("Per-agent token consumption and execution latency metrics:")
+        lbl_tbl_info.setStyleSheet("color: #94A3B8; font-size: 11px;")
+        action_bar.addWidget(lbl_tbl_info)
+        action_bar.addStretch()
+
+        btn_refresh = QPushButton("🔄 Refresh")
+        btn_refresh.setFixedHeight(28)
+        btn_refresh.clicked.connect(self._refresh_usage_stats)
+        action_bar.addWidget(btn_refresh)
+
+        btn_reset = QPushButton("🧹 Reset Stats")
+        btn_reset.setFixedHeight(28)
+        btn_reset.setStyleSheet("""
+            QPushButton {
+                background-color: #371818;
+                color: #F87171;
+                border: 1px solid #7F1D1D;
+                border-radius: 6px;
+                padding: 0 10px;
+                font-weight: 600;
+            }
+            QPushButton:hover {
+                background-color: #4C1D1D;
+                color: #FCA5A5;
+            }
+        """)
+        btn_reset.clicked.connect(self._reset_usage_stats)
+        action_bar.addWidget(btn_reset)
+
+        btn_open_json = QPushButton("📂 Open Stats (.json)")
+        btn_open_json.setFixedHeight(28)
+        btn_open_json.clicked.connect(self._open_usage_stats_json)
+        action_bar.addWidget(btn_open_json)
+
+        table_layout.addLayout(action_bar)
+
+        # Table Widget
+        self.tbl_usage = QTableWidget()
+        self.tbl_usage.setColumnCount(8)
+        self.tbl_usage.setHorizontalHeaderLabels([
+            "Staff / Agent",
+            "Model",
+            "Turns",
+            "Input Tokens",
+            "Output Tokens",
+            "Thinking",
+            "Total Tokens",
+            "Latency"
+        ])
+        self.tbl_usage.setMinimumHeight(240)
+        self.tbl_usage.verticalHeader().setVisible(False)
+        self.tbl_usage.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.tbl_usage.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.tbl_usage.setAlternatingRowColors(True)
+
+        header = self.tbl_usage.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(5, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(6, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(7, QHeaderView.ResizeMode.ResizeToContents)
+
+        self.tbl_usage.setStyleSheet("""
+            QTableWidget {
+                background-color: #0B0F19;
+                alternate-background-color: #111827;
+                color: #F9FAFB;
+                border: 1px solid #1F2937;
+                border-radius: 6px;
+                gridline-color: #1F2937;
+                font-size: 11px;
+            }
+            QHeaderView::section {
+                background-color: #111827;
+                color: #94A3B8;
+                font-weight: 700;
+                font-size: 11px;
+                padding: 6px 8px;
+                border: none;
+                border-bottom: 2px solid #1E293B;
+            }
+            QTableWidget::item {
+                padding: 6px 8px;
+            }
+            QTableWidget::item:selected {
+                background-color: #1E293B;
+                color: #38BDF8;
+            }
+        """)
+
+        table_layout.addWidget(self.tbl_usage)
+        layout.addWidget(table_group)
+        layout.addStretch()
+
     def _on_department_switched(self, index: int) -> None:
         """Handle switching between Software Engineering and Video Production squads."""
         dept_id = self.combo_department.currentData()
@@ -1322,6 +1580,10 @@ class MainWindow(QMainWindow):
 
         # Rebind Tab 3 Configuration Matrix
         self._rebind_tab_config()
+
+        # Rebind Tab 4 Usage Table
+        if hasattr(self, "tbl_usage") and hasattr(self.orchestrator, "usage_tracker"):
+            self._on_usage_updated(self.orchestrator.usage_tracker.get_telemetry_snapshot())
 
         self.lbl_status.setText(f"Active Squad: {dept.name}")
 
@@ -1467,6 +1729,10 @@ class MainWindow(QMainWindow):
         self.orchestrator.subordinate_adjusted.connect(self._on_subordinate_adjusted)
         self.orchestrator.qa_report_ready.connect(self._on_qa_report_ready)
         self.orchestrator.remote_command_dispatched.connect(self._on_remote_command_received)
+        if hasattr(self.orchestrator, "usage_tracker"):
+            self.orchestrator.usage_tracker.usage_updated.connect(self._on_usage_updated)
+            self.orchestrator.usage_tracker.system_resources_updated.connect(self._on_system_resources_updated)
+            self._on_usage_updated(self.orchestrator.usage_tracker.get_telemetry_snapshot())
 
     def _handle_dispatch(self) -> None:
         prompt = self.edit_prompt.text().strip()
@@ -1749,6 +2015,156 @@ class MainWindow(QMainWindow):
             self.lbl_status.setText(f"Remote Approval from {user_name} on Telegram.")
         elif action == "REJECT":
             self.lbl_status.setText(f"Remote Rejection from {user_name} on Telegram.")
+
+    def _on_system_resources_updated(self, cpu_pct: float, ram_pct: float, used_mb: int, total_mb: int) -> None:
+        """Slot called periodically by UsageTracker's system monitor."""
+        if hasattr(self, "bar_cpu"):
+            self.bar_cpu.setValue(int(cpu_pct))
+            self.lbl_cpu_val.setText(f"{cpu_pct:.1f}%")
+        if hasattr(self, "bar_ram"):
+            self.bar_ram.setValue(int(ram_pct))
+            self.lbl_ram_val.setText(f"{used_mb:,} MB / {total_mb:,} MB ({ram_pct:.1f}%)")
+
+    def _on_usage_updated(self, snapshot: dict) -> None:
+        """Slot called whenever tokens or CLI metrics are updated."""
+        if not hasattr(self, "lbl_total_tokens") or not hasattr(self, "tbl_usage"):
+            return
+
+        total_tok = snapshot.get("total_tokens", 0)
+        in_tok = snapshot.get("input_tokens", 0)
+        out_tok = snapshot.get("output_tokens", 0)
+        think_tok = snapshot.get("thinking_tokens", 0)
+        calls = snapshot.get("cli_invocations", 0)
+
+        self.lbl_total_tokens.setText(f"{total_tok:,}")
+        self.lbl_input_tokens.setText(f"{in_tok:,}")
+        self.lbl_output_tokens.setText(f"{out_tok:,}")
+        self.lbl_thinking_tokens.setText(f"{think_tok:,}")
+        self.lbl_total_calls.setText(f"{calls:,}")
+
+        # Update Table Rows
+        agents_data = snapshot.get("agents", {})
+        all_agent_ids = list(dict.fromkeys([cfg.agent_id for cfg in self.configs] + list(agents_data.keys())))
+
+        self.tbl_usage.setRowCount(len(all_agent_ids))
+        for row, aid in enumerate(all_agent_ids):
+            cfg = next((c for c in self.configs if c.agent_id == aid), None)
+            stat = agents_data.get(aid, {})
+
+            avatar = stat.get("avatar") or (cfg.avatar if cfg else "🤖")
+            name = stat.get("name") or (cfg.name if cfg else aid)
+            model = stat.get("model") or (cfg.model if cfg else "-")
+            turns = stat.get("calls_count", 0)
+            in_t = stat.get("input_tokens", 0)
+            out_t = stat.get("output_tokens", 0)
+            th_t = stat.get("thinking_tokens", 0)
+            tot_t = stat.get("total_tokens", 0)
+            latency = stat.get("last_latency_sec", 0.0)
+
+            # Column 0: Staff / Agent
+            it_name = QTableWidgetItem(f"{avatar}  {name}")
+            it_name.setToolTip(f"ID: {aid}")
+            self.tbl_usage.setItem(row, 0, it_name)
+
+            # Column 1: Model
+            it_model = QTableWidgetItem(model)
+            it_model.setForeground(QColor("#94A3B8"))
+            self.tbl_usage.setItem(row, 1, it_model)
+
+            # Column 2: Turns
+            it_turns = QTableWidgetItem(str(turns))
+            it_turns.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.tbl_usage.setItem(row, 2, it_turns)
+
+            # Column 3: Input Tokens
+            it_in = QTableWidgetItem(f"{in_t:,}")
+            it_in.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            it_in.setForeground(QColor("#A78BFA"))
+            self.tbl_usage.setItem(row, 3, it_in)
+
+            # Column 4: Output Tokens
+            it_out = QTableWidgetItem(f"{out_t:,}")
+            it_out.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            it_out.setForeground(QColor("#34D399"))
+            self.tbl_usage.setItem(row, 4, it_out)
+
+            # Column 5: Thinking
+            it_think = QTableWidgetItem(f"{th_t:,}")
+            it_think.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            it_think.setForeground(QColor("#F59E0B"))
+            self.tbl_usage.setItem(row, 5, it_think)
+
+            # Column 6: Total Tokens
+            it_tot = QTableWidgetItem(f"{tot_t:,}")
+            it_tot.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            it_tot.setForeground(QColor("#38BDF8"))
+            self.tbl_usage.setItem(row, 6, it_tot)
+
+            # Column 7: Latency
+            lat_str = f"{latency:.2f}s" if latency > 0 else "-"
+            it_lat = QTableWidgetItem(lat_str)
+            it_lat.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.tbl_usage.setItem(row, 7, it_lat)
+
+    def _refresh_usage_stats(self) -> None:
+        """Manually refresh usage stats snapshot and table."""
+        if hasattr(self.orchestrator, "usage_tracker"):
+            snapshot = self.orchestrator.usage_tracker.get_telemetry_snapshot()
+            self._on_usage_updated(snapshot)
+            self.lbl_status.setText("Usage stats refreshed.")
+
+    def _reset_usage_stats(self) -> None:
+        """Reset all tracked usage metrics."""
+        if hasattr(self.orchestrator, "usage_tracker"):
+            self.orchestrator.usage_tracker.reset_stats()
+            self.lbl_status.setText("Usage stats reset successfully.")
+
+    def _open_usage_stats_json(self) -> None:
+        """Open or display the persistent JSON usage metrics file."""
+        if not hasattr(self.orchestrator, "usage_tracker"):
+            return
+        p_file = self.orchestrator.usage_tracker.persistence_file
+        if not os.path.exists(p_file):
+            self.orchestrator.usage_tracker._save()
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle("📊 Usage Telemetry JSON (.agent/usage_stats.json)")
+        dialog.resize(680, 520)
+        d_layout = QVBoxLayout(dialog)
+        d_layout.setContentsMargins(14, 14, 14, 14)
+        d_layout.setSpacing(10)
+
+        lbl_path = QLabel(f"File: {p_file}")
+        lbl_path.setStyleSheet("color: #94A3B8; font-size: 11px; font-family: 'JetBrains Mono', monospace;")
+        d_layout.addWidget(lbl_path)
+
+        text_edit = QTextEdit()
+        text_edit.setReadOnly(True)
+        text_edit.setStyleSheet("""
+            background-color: #0B0F19;
+            color: #F8FAFC;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 11px;
+            border: 1px solid #1F2937;
+            border-radius: 6px;
+            padding: 8px;
+        """)
+        try:
+            with open(p_file, "r", encoding="utf-8") as f:
+                content = f.read()
+        except OSError as e:
+            content = f"Error reading file: {e}"
+        text_edit.setPlainText(content)
+        d_layout.addWidget(text_edit)
+
+        btn_box = QHBoxLayout()
+        btn_close = QPushButton("Close")
+        btn_close.clicked.connect(dialog.accept)
+        btn_box.addStretch()
+        btn_box.addWidget(btn_close)
+        d_layout.addLayout(btn_box)
+
+        dialog.exec()
 
     def closeEvent(self, event: QCloseEvent) -> None:
         if hasattr(self.orchestrator, "telegram_bridge"):
