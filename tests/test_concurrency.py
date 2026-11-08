@@ -244,7 +244,7 @@ class TestHierarchicalArchitecture(unittest.TestCase):
         # Verify ClickOnlyComboBox behavior: ignore wheel events to prevent touchpad accidental switching
         from src.ui.main_window import ClickOnlyComboBox
         from PyQt6.QtGui import QWheelEvent
-        from PyQt6.QtCore import QPointF, QPoint
+        from PyQt6.QtCore import QPointF, QPoint, Qt
 
         self.assertIsInstance(window.combo_department, ClickOnlyComboBox)
         for row_w in window.matrix_row_widgets:

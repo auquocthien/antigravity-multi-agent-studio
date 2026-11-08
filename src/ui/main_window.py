@@ -3,8 +3,8 @@
 import os
 import subprocess
 from typing import Dict, List, Optional
-from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QCloseEvent, QTextCursor, QPainter, QPen, QColor, QWheelEvent
+from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtGui import QCloseEvent, QTextCursor, QPainter, QPen, QColor, QWheelEvent, QKeyEvent
 from PyQt6.QtWidgets import (
     QApplication,
     QMainWindow,
@@ -512,9 +512,9 @@ QStatusBar {
 
 QScrollBar:vertical {
     background: #0B0F19;
-    width: 8px;
+    width: 14px;
     border-radius: 4px;
-    margin: 0px;
+    margin: 16px 0px 16px 0px;
 }
 
 QScrollBar::handle:vertical {
@@ -527,8 +527,48 @@ QScrollBar::handle:vertical:hover {
     background: #0284C7;
 }
 
-QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+QScrollBar::sub-line:vertical {
+    background: #111827;
+    height: 16px;
+    subcontrol-position: top;
+    subcontrol-origin: margin;
+    border: 1px solid #1F2937;
+    border-radius: 3px;
+}
+
+QScrollBar::sub-line:vertical:hover {
+    background: #1E293B;
+    border-color: #0284C7;
+}
+
+QScrollBar::add-line:vertical {
+    background: #111827;
+    height: 16px;
+    subcontrol-position: bottom;
+    subcontrol-origin: margin;
+    border: 1px solid #1F2937;
+    border-radius: 3px;
+}
+
+QScrollBar::add-line:vertical:hover {
+    background: #1E293B;
+    border-color: #0284C7;
+}
+
+QScrollBar::up-arrow:vertical {
+    width: 0px;
     height: 0px;
+    border-left: 4px solid transparent;
+    border-right: 4px solid transparent;
+    border-bottom: 5px solid #38BDF8;
+}
+
+QScrollBar::down-arrow:vertical {
+    width: 0px;
+    height: 0px;
+    border-left: 4px solid transparent;
+    border-right: 4px solid transparent;
+    border-top: 5px solid #38BDF8;
 }
 """
 
@@ -654,6 +694,12 @@ class MainWindow(QMainWindow):
         self.setStatusBar(self.status_bar)
         self.lbl_status = QLabel("Ready.")
         self.status_bar.addWidget(self.lbl_status)
+
+        # Tab switch and Instance 2 auto-refresh timer
+        self.tabs.currentChanged.connect(self._on_tab_changed)
+        self.inst2_status_timer = QTimer(self)
+        self.inst2_status_timer.timeout.connect(self._refresh_inst2_status)
+        self.inst2_status_timer.start(3000)
 
     def _setup_tab_pipeline(self, parent: QWidget) -> None:
         """Tab 1: Horizontal Left-to-Right compact pipeline with bus log."""
@@ -2560,6 +2606,40 @@ class MainWindow(QMainWindow):
         if hasattr(bridge, "launch_interactive_login"):
             ok, msg = bridge.launch_interactive_login()
             self.lbl_status.setText(msg)
+
+    def _on_tab_changed(self, idx: int) -> None:
+        if idx == 2:  # Tab 3 Settings
+            self._refresh_inst2_status()
+
+    def _refresh_inst2_status(self) -> None:
+        """Periodically checks and updates the UI auth status of Antigravity CLI Instance 2."""
+        bridge = CliRegistry.get_bridge("agy_instance_2")
+        is_auth = bridge.is_authenticated() if hasattr(bridge, "is_authenticated") else False
+        if hasattr(self, "lbl_inst2_status"):
+            current_text = "● Authenticated" if is_auth else "● Authentication Required"
+            if self.lbl_inst2_status.text() != current_text:
+                self.lbl_inst2_status.setText(current_text)
+                self.lbl_inst2_status.setStyleSheet(
+                    "color: #34D399; font-size: 11px; font-weight: bold;" if is_auth
+                    else "color: #F59E0B; font-size: 11px; font-weight: bold;"
+                )
+
+    def keyPressEvent(self, event: QKeyEvent) -> None:
+        """Handle keyboard Up/Down arrow keys to smoothly scroll the active tab page."""
+        if event.key() in (Qt.Key.Key_Up, Qt.Key.Key_Down):
+            focus_w = self.focusWidget()
+            # Do not intercept if user is typing in a text field or combobox has popup open
+            if not isinstance(focus_w, (QLineEdit, QTextEdit, QTextBrowser)):
+                delta = -45 if event.key() == Qt.Key.Key_Up else 45
+                current_tab = self.tabs.currentWidget()
+                if current_tab:
+                    scroll_areas = current_tab.findChildren(QScrollArea)
+                    if scroll_areas:
+                        bar = scroll_areas[0].verticalScrollBar()
+                        bar.setValue(bar.value() + delta)
+                        event.accept()
+                        return
+        super().keyPressEvent(event)
 
     def closeEvent(self, event: QCloseEvent) -> None:
         if hasattr(self.orchestrator, "telegram_bridge"):
