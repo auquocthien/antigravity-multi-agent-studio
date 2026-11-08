@@ -16,6 +16,11 @@ try:
 except ImportError:
     from src.core.cli_engine import BaseCliBridge, AgyCliBridge, OllamaCliBridge, CustomCliBridge, CliRegistry
 
+try:
+    from .checkpoint_manager import CheckpointManager, PipelineCheckpoint
+except ImportError:
+    from src.core.checkpoint_manager import CheckpointManager, PipelineCheckpoint
+
 
 class AgentRole(Enum):
     LEADER = "Lead Architect"
@@ -358,6 +363,7 @@ class SubAgentWorker(QThread):
     message_bus_signal = pyqtSignal(object)     # StandardMessagePacket
     finished_signal = pyqtSignal(str, bool, str)# (agent_id, success, summary)
     adjust_subordinate_signal = pyqtSignal(str, str, str) # (target_agent_id, new_model, new_effort)
+    failover_triggered = pyqtSignal(str, str, str, str) # (agent_id, old_engine, new_engine, reason)
 
     def __init__(
         self,
@@ -366,6 +372,7 @@ class SubAgentWorker(QThread):
         logger: HistoryLogger,
         execution_mode: str = "simulation",
         usage_tracker: Optional[Any] = None,
+        auto_failover: bool = True,
         parent: Optional[QObject] = None
     ) -> None:
         super().__init__(parent)
@@ -374,6 +381,7 @@ class SubAgentWorker(QThread):
         self.logger: HistoryLogger = logger
         self.execution_mode: str = execution_mode
         self.usage_tracker = usage_tracker
+        self.auto_failover: bool = auto_failover
         self._is_running: bool = True
         self._is_paused: bool = False
         self._mutex: QMutex = QMutex()
@@ -630,10 +638,13 @@ class SubAgentWorker(QThread):
             self.progress_signal.emit(agent_id, 30)
 
             # Stream real-time output line by line into the agent's Inspector terminal
+            captured_lines = []
+            rate_limit_detected = False
             for raw_line in iter(self._active_subprocess.stdout.readline, ""):
                 if not self._check_pause_and_running():
                     break
                 if raw_line:
+                    captured_lines.append(raw_line)
                     text_chunk, usage_delta = bridge.parse_stream_line(raw_line)
                     if text_chunk:
                         self.stream_signal.emit(agent_id, "OUTPUT", text_chunk)
@@ -642,6 +653,10 @@ class SubAgentWorker(QThread):
                             captured_usage = {}
                         captured_usage.update(usage_delta)
 
+                    # Check for rate limit or quota exhaustion
+                    if bridge.is_rate_limited(raw_line):
+                        rate_limit_detected = True
+
                     lower = raw_line.lower()
                     if "writing" in lower or "creating" in lower or "executing" in lower:
                         self.progress_signal.emit(agent_id, 75)
@@ -649,6 +664,37 @@ class SubAgentWorker(QThread):
             self._active_subprocess.stdout.close()
             return_code = self._active_subprocess.wait()
             elapsed_sec = max(0.1, round(time.time() - start_t, 2))
+
+            # Automated Failover Check upon rate limit or quota exhaustion
+            if (rate_limit_detected or return_code != 0) and self.auto_failover:
+                full_output = "".join(captured_lines)
+                if rate_limit_detected or bridge.is_rate_limited(full_output, return_code):
+                    old_engine = self.config.cli_engine
+                    failover_engine = CliRegistry.get_failover_engine(old_engine)
+                    if failover_engine != old_engine:
+                        f_bridge = CliRegistry.get_bridge(failover_engine)
+                        f_models = f_bridge.get_available_models()
+                        f_model = f_models[0] if f_models else "llama3.2:1b"
+
+                        self.stream_signal.emit(
+                            agent_id,
+                            "SYSTEM",
+                            f"\n⚠️ [RATE LIMIT DETECTED] {bridge.display_name} hit rate limit / quota exhaustion.\n"
+                            f"🔄 [FAILOVER TRIGGERED] Seamlessly switching {self.config.name} to secondary CLI: {f_bridge.display_name} ({f_model})...\n"
+                        )
+
+                        self.failover_triggered.emit(agent_id, old_engine, failover_engine, "Rate limit / Quota exceeded")
+                        self.config.cli_engine = failover_engine
+                        self.config.model = f_model
+
+                        self._dispatch_structured_packet(
+                            intent="FAILOVER_SWITCH",
+                            to_agent="ALL",
+                            payload=f"Automatic failover: {self.config.name} switched from {old_engine} to {failover_engine} ({f_model}) due to rate limit."
+                        )
+
+                        # Re-execute immediately with the failover engine
+                        return self._execute_live_cli_flow()
 
             if return_code == 0:
                 self.progress_signal.emit(agent_id, 100)
@@ -1146,6 +1192,8 @@ class AgentOrchestrator(QObject):
     subordinate_adjusted = pyqtSignal(str, str, str) # (agent_id, model, effort)
     qa_report_ready = pyqtSignal(str, str, str)  # (dept_id, report_path, markdown_content)
     remote_command_dispatched = pyqtSignal(str, str, str)  # (action, payload, user_name)
+    checkpoint_updated = pyqtSignal(bool, str)  # (has_checkpoint, stage_name)
+    failover_forwarded = pyqtSignal(str, str, str, str)  # (agent_id, old_engine, new_engine, reason)
 
     def __init__(self, parent: Optional[QObject] = None, usage_tracker: Optional[Any] = None) -> None:
         super().__init__(parent)
@@ -1157,6 +1205,8 @@ class AgentOrchestrator(QObject):
         self._current_task: str = ""
         self._is_active: bool = False
         self.latest_report_data: Optional[Dict[str, Any]] = None
+        self.checkpoint_manager = CheckpointManager()
+        self.auto_failover_enabled: bool = True
 
         # Usage & Telemetry Tracker
         if usage_tracker is not None:
@@ -1252,19 +1302,21 @@ class AgentOrchestrator(QObject):
                     system_prompt="Build Remotion React scenes, kinetic text, and spring-physics animations.",
                     persona_file=os.path.join(personas_dir, "07_motion_graphics_dev.md"),
                     skills=["remotion-create", "remotion-markup", "remotion-interactivity"],
-                    rules=["01-architecture-boundaries.md"]
+                    rules=["01-architecture-boundaries.md"],
+                    cli_engine="agy"
                 ),
                 SubAgentConfig(
                     agent_id="agent_video_audio",
                     name="Audio & Captions Eng",
                     role=AgentRole.DEV_AUDIO,
                     avatar="🎙️",
-                    model="Gemini 3.8 Flash (Medium) (gemini-3.8-flash-medium)",
+                    model="llama3.2:1b",
                     thinking_level="medium",
                     system_prompt="Synthesize voiceover narration, audio ducking, and word-synchronized SRT subtitles.",
                     persona_file=os.path.join(personas_dir, "08_audio_captions_dev.md"),
                     skills=["remotion-captions", "remotion-multimedia"],
-                    rules=["01-architecture-boundaries.md"]
+                    rules=["01-architecture-boundaries.md"],
+                    cli_engine="ollama"
                 ),
                 SubAgentConfig(
                     agent_id="agent_video_reviewer",
@@ -1276,7 +1328,8 @@ class AgentOrchestrator(QObject):
                     system_prompt="Audit 60fps frame rates, subtitle readability, color grading, and timing compliance.",
                     persona_file=os.path.join(personas_dir, "09_video_quality_reviewer.md"),
                     skills=["remotion-best-practices"],
-                    rules=["02-investigate-before-fix.md", "03-peer-review-gating.md"]
+                    rules=["02-investigate-before-fix.md", "03-peer-review-gating.md"],
+                    cli_engine="agy"
                 ),
                 SubAgentConfig(
                     agent_id="agent_video_render",
@@ -1288,7 +1341,8 @@ class AgentOrchestrator(QObject):
                     system_prompt="Execute headless Remotion render compilation and verify final MP4 artifact stability.",
                     persona_file=os.path.join(personas_dir, "10_render_qa_engineer.md"),
                     skills=["remotion-render", "headless-qa-automation"],
-                    rules=[]
+                    rules=[],
+                    cli_engine="agy"
                 ),
             ]
 
@@ -1304,7 +1358,8 @@ class AgentOrchestrator(QObject):
                 system_prompt="Analyze requirements, partition scopes, and dynamically allocate subagent models and effort.",
                 persona_file=os.path.join(personas_dir, "01_leader_architect.md"),
                 skills=["concurrency-safe-engine"],
-                rules=["01-architecture-boundaries.md"]
+                rules=["01-architecture-boundaries.md"],
+                cli_engine="agy"
             ),
             SubAgentConfig(
                 agent_id="agent_dev_ui",
@@ -1316,19 +1371,21 @@ class AgentOrchestrator(QObject):
                 system_prompt="Build responsive PyQt6 widgets and visual indicators.",
                 persona_file=os.path.join(personas_dir, "02_dev_frontend.md"),
                 skills=["pyqt-ui-builder", "ui-ux-pro-max", "ui-styling"],
-                rules=["01-architecture-boundaries.md"]
+                rules=["01-architecture-boundaries.md"],
+                cli_engine="agy"
             ),
             SubAgentConfig(
                 agent_id="agent_dev_core",
                 name="Dev 2: Core & Threads",
                 role=AgentRole.DEV_CORE,
                 avatar="💻",
-                model="Gemini 3.8 Flash",
+                model="llama3.2:1b",
                 thinking_level="medium",
                 system_prompt="Implement asynchronous thread safety, message logging, and agy CLI integration.",
                 persona_file=os.path.join(personas_dir, "03_dev_backend.md"),
                 skills=["concurrency-safe-engine"],
-                rules=["01-architecture-boundaries.md"]
+                rules=["01-architecture-boundaries.md"],
+                cli_engine="ollama"
             ),
             SubAgentConfig(
                 agent_id="agent_reviewer",
@@ -1395,7 +1452,8 @@ class AgentOrchestrator(QObject):
             self._current_task,
             self.logger,
             execution_mode=self.execution_mode,
-            usage_tracker=self.usage_tracker
+            usage_tracker=self.usage_tracker,
+            auto_failover=self.auto_failover_enabled
         )
         worker.stream_signal.connect(self.token_stream_forwarded.emit)
         worker.status_signal.connect(self.status_forwarded.emit)
@@ -1403,9 +1461,123 @@ class AgentOrchestrator(QObject):
         worker.message_bus_signal.connect(self._on_message_bus_packet)
         worker.finished_signal.connect(self._on_stage_finished)
         worker.adjust_subordinate_signal.connect(self._on_subordinate_adjusted)
+        worker.failover_triggered.connect(self._on_worker_failover)
 
         self.workers[config.agent_id] = worker
         worker.start()
+
+    def _on_worker_failover(self, agent_id: str, old_engine: str, new_engine: str, reason: str) -> None:
+        """Handle automatic failover event when a worker encounters rate limits."""
+        if hasattr(self, "config_map") and agent_id in self.config_map:
+            self.config_map[agent_id].cli_engine = new_engine
+        self.failover_forwarded.emit(agent_id, old_engine, new_engine, reason)
+        self.save_current_checkpoint(
+            self._get_stage_index_for_agent(agent_id),
+            f"Failover ({agent_id}: {new_engine})"
+        )
+        if self.telegram_config.enabled and self.telegram_config.bot_token and self.telegram_config.chat_id:
+            self.telegram_notifier.send_message(
+                f"⚠️ <b>[FAILOVER]</b> Agent <code>{agent_id}</code> encountered rate limit on <code>{old_engine}</code>.\n"
+                f"🔄 Switched automatically to <b>{new_engine}</b>."
+            )
+
+    def _get_stage_index_for_agent(self, agent_id: str) -> int:
+        if agent_id in ("agent_leader", "agent_video_director"):
+            return 1
+        elif agent_id in ("agent_dev_ui", "agent_dev_core", "agent_video_motion", "agent_video_audio"):
+            return 2
+        elif agent_id in ("agent_reviewer", "agent_video_reviewer"):
+            return 3
+        return 4
+
+    def save_current_checkpoint(self, stage_idx: int, stage_name: str) -> Optional[PipelineCheckpoint]:
+        """Saves current pipeline execution state to checkpoint file."""
+        if not self._current_task:
+            return None
+        configs = self.get_department_configs(self.active_department_id)
+        agent_states = {}
+        for c in configs:
+            agent_states[c.agent_id] = {
+                "name": c.name,
+                "engine": c.cli_engine,
+                "model": c.model,
+                "status": "COMPLETED" if c.agent_id in self.completed_stages else "PENDING"
+            }
+        chk = self.checkpoint_manager.save_checkpoint(
+            department_id=self.active_department_id,
+            task_prompt=self._current_task,
+            stage_index=stage_idx,
+            stage_name=stage_name,
+            completed_stages=list(self.completed_stages),
+            agent_states=agent_states
+        )
+        self.checkpoint_updated.emit(True, stage_name)
+        return chk
+
+    def has_checkpoint(self) -> bool:
+        """Returns True if a valid checkpoint is available to resume."""
+        return self.checkpoint_manager.has_valid_checkpoint()
+
+    def get_checkpoint_stage_name(self) -> str:
+        chk = self.checkpoint_manager.load_checkpoint()
+        return chk.stage_name if chk else ""
+
+    def resume_from_checkpoint(self) -> bool:
+        """Resumes pipeline execution from saved checkpoint stage without starting over."""
+        chk = self.checkpoint_manager.load_checkpoint()
+        if not chk or chk.stage_index >= 5:
+            return False
+
+        self.stop_all()
+        self.workers.clear()
+
+        # Restore state
+        self.active_department_id = chk.department_id
+        self._current_task = chk.task_prompt
+        self.completed_stages = set(chk.completed_stages)
+        self._is_active = True
+
+        configs = self.get_department_configs(self.active_department_id)
+        self.config_map = {c.agent_id: c for c in configs}
+
+        for aid, a_state in chk.agent_states.items():
+            if aid in self.config_map:
+                if "model" in a_state:
+                    self.config_map[aid].model = a_state["model"]
+                if "engine" in a_state:
+                    self.config_map[aid].cli_engine = a_state["engine"]
+
+        resume_pkt = StandardMessagePacket(
+            intent="RESUME_PIPELINE",
+            from_agent="ORCHESTRATOR",
+            to_agent="ALL",
+            model="System",
+            effort="system",
+            payload=f"Resuming pipeline from Checkpoint: {chk.stage_name} (Task: {chk.task_prompt[:45]}...)"
+        )
+        self.logger.record_packet(resume_pkt)
+        self.message_bus_forwarded.emit(resume_pkt)
+
+        is_video = "video" in self.active_department_id
+        if chk.stage_index == 1:
+            init_id = "agent_video_director" if is_video else "agent_leader"
+            self._start_worker(self.config_map[init_id])
+        elif chk.stage_index == 2:
+            dev1_id = "agent_video_motion" if is_video else "agent_dev_ui"
+            dev2_id = "agent_video_audio" if is_video else "agent_dev_core"
+            if dev1_id not in self.completed_stages:
+                self._start_worker(self.config_map[dev1_id])
+            if dev2_id not in self.completed_stages:
+                self._start_worker(self.config_map[dev2_id])
+        elif chk.stage_index == 3:
+            rev_id = "agent_video_reviewer" if is_video else "agent_reviewer"
+            self._start_worker(self.config_map[rev_id])
+        elif chk.stage_index == 4:
+            test_id = "agent_video_render" if is_video else "agent_tester"
+            self._start_worker(self.config_map[test_id])
+
+        self.checkpoint_updated.emit(True, chk.stage_name)
+        return True
 
     def _on_message_bus_packet(self, packet: StandardMessagePacket) -> None:
         """Forward packet and detect embedded QA report certificates."""
@@ -1479,6 +1651,7 @@ class AgentOrchestrator(QObject):
         self.agent_finished_forwarded.emit(agent_id, success, summary)
         if not self._is_active or not success:
             if not success:
+                self.save_current_checkpoint(self._get_stage_index_for_agent(agent_id), f"Halted at {agent_id}")
                 self.pipeline_finished.emit(False, f"Pipeline halted: {agent_id} encountered an error.")
             return
 
@@ -1486,6 +1659,8 @@ class AgentOrchestrator(QObject):
         is_video = "video" in agent_id
         # Advance hierarchical stages
         if agent_id in ("agent_leader", "agent_video_director"):
+            # Stage 1 Complete -> Checkpoint for Stage 2
+            self.save_current_checkpoint(2, "Stage 2: Parallel Developers")
             # Stage 2: Parallel execution of Dev 1 and Dev 2 (or Motion & Audio)
             dev1_id = "agent_video_motion" if is_video else "agent_dev_ui"
             dev2_id = "agent_video_audio" if is_video else "agent_dev_core"
@@ -1500,17 +1675,23 @@ class AgentOrchestrator(QObject):
 
             reviewer_id = "agent_video_reviewer" if is_video else "agent_reviewer"
             if dev1_done and dev2_done and reviewer_id not in self.workers:
+                # Stage 2 Complete -> Checkpoint for Stage 3
+                self.save_current_checkpoint(3, "Stage 3: Code Review")
                 # Stage 3: Handoff to Reviewer
                 self._start_worker(self.config_map[reviewer_id])
 
         elif agent_id in ("agent_reviewer", "agent_video_reviewer"):
-            # Stage 4: Handoff to Runtime Tester / Render QA
             test_id = "agent_video_render" if is_video else "agent_tester"
             if test_id not in self.workers:
+                # Stage 3 Complete -> Checkpoint for Stage 4
+                self.save_current_checkpoint(4, "Stage 4: Runtime Testing")
+                # Stage 4: Handoff to Runtime Tester / Render QA
                 self._start_worker(self.config_map[test_id])
 
         elif agent_id in ("agent_tester", "agent_video_render"):
             self._is_active = False
+            self.checkpoint_manager.clear_checkpoint()
+            self.checkpoint_updated.emit(False, "")
             self.pipeline_finished.emit(True, "All 5 hierarchical pipeline stages successfully completed & verified.")
 
     def pause_all(self) -> None:

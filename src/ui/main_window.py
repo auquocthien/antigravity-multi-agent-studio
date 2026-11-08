@@ -682,6 +682,32 @@ class MainWindow(QMainWindow):
         self.btn_stop.clicked.connect(self._handle_stop)
         ctrl_bar.addWidget(self.btn_stop)
 
+        self.btn_resume = QPushButton("▶️ Resume")
+        self.btn_resume.setObjectName("btn_resume")
+        self.btn_resume.setFixedHeight(32)
+        self.btn_resume.setEnabled(False)
+        self.btn_resume.setStyleSheet("""
+            QPushButton#btn_resume {
+                background-color: #4338CA;
+                color: #FFFFFF;
+                border: 1px solid #6366F1;
+                border-radius: 6px;
+                padding: 0 12px;
+                font-weight: 700;
+                font-size: 11px;
+            }
+            QPushButton#btn_resume:hover {
+                background-color: #4F46E5;
+            }
+            QPushButton#btn_resume:disabled {
+                background-color: #1F2937;
+                color: #6B7280;
+                border-color: #374151;
+            }
+        """)
+        self.btn_resume.clicked.connect(self._handle_resume)
+        ctrl_bar.addWidget(self.btn_resume)
+
         ctrl_bar.addSpacing(12)
         self.lbl_active_prompt = QLabel("Mission: Linux desktop utility")
         self.lbl_active_prompt.setStyleSheet("""
@@ -1151,6 +1177,21 @@ class MainWindow(QMainWindow):
 
         self._rebind_tab_config()
         layout.addWidget(matrix_group)
+
+        # Failover Strategy Box
+        failover_group = QGroupBox("🔄 Multi-CLI Failover & Recovery Strategy")
+        failover_layout = QHBoxLayout(failover_group)
+        failover_layout.setContentsMargins(14, 12, 14, 12)
+        failover_layout.setSpacing(12)
+
+        self.chk_auto_failover = QCheckBox("Automated Failover: Switch to Secondary CLI upon Rate Limit / Quota Exceeded (429)")
+        self.chk_auto_failover.setStyleSheet("font-weight: 600; color: #38BDF8; font-size: 12px;")
+        self.chk_auto_failover.setChecked(self.orchestrator.auto_failover_enabled)
+        self.chk_auto_failover.toggled.connect(self._on_toggle_failover)
+        failover_layout.addWidget(self.chk_auto_failover)
+        failover_layout.addStretch()
+
+        layout.addWidget(failover_group)
 
         # Telegram Remote Operations & Push Notifications Box
         tele_group = QGroupBox("📱 Telegram Remote Ops & Push Notifications")
@@ -1854,6 +1895,11 @@ class MainWindow(QMainWindow):
             self.orchestrator.usage_tracker.usage_updated.connect(self._on_usage_updated)
             self.orchestrator.usage_tracker.system_resources_updated.connect(self._on_system_resources_updated)
             self._on_usage_updated(self.orchestrator.usage_tracker.get_telemetry_snapshot())
+        if hasattr(self.orchestrator, "checkpoint_updated"):
+            self.orchestrator.checkpoint_updated.connect(self._on_checkpoint_updated)
+        if hasattr(self.orchestrator, "failover_forwarded"):
+            self.orchestrator.failover_forwarded.connect(self._on_failover_triggered)
+        self._update_resume_button()
 
     def _handle_dispatch(self) -> None:
         prompt = self.edit_prompt.text().strip()
@@ -1869,6 +1915,7 @@ class MainWindow(QMainWindow):
 
         self.bus_terminal.clear()
         self.btn_dispatch.setEnabled(False)
+        self.btn_resume.setEnabled(False)
         self.btn_pause.setEnabled(True)
         self.btn_pause.setText("Pause")
         self.btn_stop.setEnabled(True)
@@ -1895,6 +1942,7 @@ class MainWindow(QMainWindow):
         self.btn_pause.setEnabled(False)
         self.btn_pause.setText("Pause")
         self.btn_stop.setEnabled(False)
+        self._update_resume_button()
         self.lbl_status.setText("Pipeline stopped.")
 
     def _on_token_stream(self, agent_id: str, stream_type: str, chunk: str) -> None:
@@ -1978,6 +2026,7 @@ class MainWindow(QMainWindow):
         self.btn_pause.setEnabled(False)
         self.btn_pause.setText("Pause")
         self.btn_stop.setEnabled(False)
+        self._update_resume_button()
         self.lbl_status.setText(summary)
 
     def _toggle_execution_mode(self) -> None:
@@ -2308,8 +2357,77 @@ class MainWindow(QMainWindow):
 
         dialog.exec()
 
+    def _update_resume_button(self) -> None:
+        """Update Resume button state and label based on active checkpoint."""
+        if not hasattr(self, "btn_resume") or not hasattr(self, "orchestrator"):
+            return
+        has_cp = self.orchestrator.has_checkpoint()
+        if has_cp:
+            stage_name = self.orchestrator.get_checkpoint_stage_name()
+            self.btn_resume.setEnabled(True)
+            self.btn_resume.setText(f"▶️ Resume ({stage_name})")
+            self.btn_resume.setToolTip(f"Resume mission from checkpoint at {stage_name}")
+        else:
+            self.btn_resume.setEnabled(False)
+            self.btn_resume.setText("▶️ Resume")
+            self.btn_resume.setToolTip("No active checkpoint available to resume.")
+
+    def _on_checkpoint_updated(self, has_checkpoint: bool, stage_name: str) -> None:
+        """Slot invoked whenever a pipeline checkpoint is created or cleared."""
+        self._update_resume_button()
+        if has_checkpoint and stage_name:
+            self.lbl_status.setText(f"Checkpoint saved: Ready to resume from {stage_name}")
+
+    def _on_failover_triggered(self, agent_id: str, old_engine: str, new_engine: str, reason: str) -> None:
+        """Slot invoked when rate limit triggers automatic CLI failover."""
+        if agent_id in self.node_widgets:
+            node = self.node_widgets[agent_id]
+            node.setToolTip(f"Failover triggered from {old_engine} to {new_engine}: {reason}")
+        self.lbl_status.setText(f"⚠️ Failover: {agent_id} switched {old_engine} ➔ {new_engine} ({reason})")
+
+    def _on_toggle_failover(self, checked: bool) -> None:
+        """Slot invoked when user toggles automated failover setting."""
+        self.orchestrator.auto_failover_enabled = checked
+        status = "enabled" if checked else "disabled"
+        self.lbl_status.setText(f"Automated CLI failover {status}.")
+
+    def _handle_resume(self) -> None:
+        """Resumes hierarchical pipeline from saved checkpoint without restarting from stage 1."""
+        if not self.orchestrator.has_checkpoint():
+            return
+
+        chk = self.orchestrator.checkpoint_manager.load_checkpoint()
+        if not chk:
+            return
+
+        # Restore prompt UI
+        if chk.task_prompt:
+            self.edit_prompt.setText(chk.task_prompt)
+            self.lbl_active_prompt.setText(f"Mission: {chk.task_prompt}")
+
+        # Mark completed stages on compact nodes
+        completed = set(chk.completed_stages)
+        for aid, node in self.node_widgets.items():
+            if aid in completed:
+                node.set_progress(100)
+                node.set_status("COMPLETED")
+            else:
+                node.set_progress(0)
+                node.set_status("IDLE")
+
+        self.btn_dispatch.setEnabled(False)
+        self.btn_resume.setEnabled(False)
+        self.btn_pause.setEnabled(True)
+        self.btn_pause.setText("Pause")
+        self.btn_stop.setEnabled(True)
+        self._is_paused = False
+
+        self.lbl_status.setText(f"Resuming pipeline from {chk.stage_name}...")
+        self.orchestrator.resume_from_checkpoint()
+
     def closeEvent(self, event: QCloseEvent) -> None:
         if hasattr(self.orchestrator, "telegram_bridge"):
             self.orchestrator.telegram_bridge.stop_polling()
         self.orchestrator.stop_all()
         event.accept()
+

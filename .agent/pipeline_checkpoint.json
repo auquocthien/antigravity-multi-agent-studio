@@ -1,0 +1,14 @@
+{
+  "stage_index": 2,
+  "stage_name": "Stage 2 (Development)",
+  "checkpoint_id": "chk_1794111920_2",
+  "timestamp": "2026-11-08T04:25:20Z",
+  "department_id": "dept_dev",
+  "task_prompt": "Linux desktop utility",
+  "completed_stages": [
+    "agent_leader"
+  ],
+  "agent_states": {},
+  "artifacts": [],
+  "failover_log": []
+}

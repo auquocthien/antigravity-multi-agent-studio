@@ -54,6 +54,25 @@ class BaseCliBridge(ABC):
         """
         pass
 
+    def is_rate_limited(self, output_line: str, exit_code: Optional[int] = None) -> bool:
+        """Detect whether this output line or exit code indicates a rate limit or quota exhaustion."""
+        if not output_line:
+            return False
+        s = output_line.lower()
+        limit_markers = [
+            "429",
+            "resource_exhausted",
+            "rate limit",
+            "rate_limit",
+            "quota exceeded",
+            "exceeded your current quota",
+            "too many requests",
+            "overloaded",
+            "quota_exhausted",
+            "capacity exceeded",
+        ]
+        return any(m in s for m in limit_markers)
+
 
 class AgyCliBridge(BaseCliBridge):
     """Executes commands via the Antigravity CLI (agy) with model and effort routing."""
@@ -375,3 +394,13 @@ class CliRegistry:
         for b in cls._bridges.values():
             result.append((b.engine_id, b.display_name, b.is_available()))
         return result
+
+    @classmethod
+    def get_failover_engine(cls, current_engine: str) -> str:
+        """Returns secondary fallback engine when current engine encounters limits."""
+        norm = (current_engine or "agy").lower().strip()
+        if "agy" in norm:
+            return "ollama" if "ollama" in cls._bridges else "custom"
+        elif "ollama" in norm:
+            return "agy" if "agy" in cls._bridges else "custom"
+        return "ollama"

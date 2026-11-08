@@ -808,7 +808,130 @@ class TestHierarchicalArchitecture(unittest.TestCase):
         if os.path.exists(temp_dual_stats):
             os.remove(temp_dual_stats)
 
+    def test_13_checkpoint_and_failover_mechanism(self) -> None:
+        """Verify CheckpointManager persistence, rate-limit detection, automated failover, and resume flow."""
+        from src.core.checkpoint_manager import CheckpointManager, PipelineCheckpoint
+        from src.core.cli_engine import CliRegistry, AgyCliBridge, OllamaCliBridge
+
+        # 1. Test CheckpointManager Persistence
+        temp_cp_file = "/tmp/test_pipeline_checkpoint.json"
+        if os.path.exists(temp_cp_file):
+            os.remove(temp_cp_file)
+
+        cp_mgr = CheckpointManager(checkpoint_file=temp_cp_file)
+        self.assertFalse(cp_mgr.has_valid_checkpoint())
+        self.assertIsNone(cp_mgr.load_checkpoint())
+
+        sample_cp = PipelineCheckpoint(
+            stage_index=2,
+            stage_name="Stage 2 (Development)",
+            completed_stages=["agent_leader"],
+            agent_states={
+                "agent_dev_ui": {"engine": "agy", "model": "gemini-3.8-flash-medium", "status": "COMPLETED"},
+                "agent_dev_core": {"engine": "ollama", "model": "llama3.2:1b", "status": "PLANNING"},
+            },
+            task_prompt="Build multi-cli utility",
+            department_id="dept_dev"
+        )
+        saved_ok = cp_mgr.save_checkpoint(sample_cp)
+        self.assertTrue(saved_ok)
+        self.assertTrue(cp_mgr.has_valid_checkpoint())
+
+        loaded_cp = cp_mgr.load_checkpoint()
+        self.assertIsNotNone(loaded_cp)
+        self.assertEqual(loaded_cp.stage_index, 2)
+        self.assertEqual(loaded_cp.stage_name, "Stage 2 (Development)")
+        self.assertEqual(loaded_cp.completed_stages, ["agent_leader"])
+        self.assertIn("agent_dev_ui", loaded_cp.agent_states)
+        self.assertEqual(loaded_cp.agent_states["agent_dev_ui"]["engine"], "agy")
+        self.assertEqual(loaded_cp.agent_states["agent_dev_core"]["engine"], "ollama")
+
+        # 2. Test Rate Limit Detection & Failover Mapping
+        bridge_agy = CliRegistry.get_bridge("agy")
+        self.assertTrue(bridge_agy.is_rate_limited("Error: 429 Too Many Requests: Rate limit exceeded", 1))
+        self.assertTrue(bridge_agy.is_rate_limited("google.api_core.exceptions.ResourceExhausted: 429 Quota reached", 1))
+        self.assertFalse(bridge_agy.is_rate_limited("Building component successfully", 0))
+
+        # Test failover registry
+        self.assertEqual(CliRegistry.get_failover_engine("agy"), "ollama")
+        self.assertEqual(CliRegistry.get_failover_engine("ollama"), "agy")
+
+        # 3. Test Department Default Dual-CLI Configuration
+        orch = AgentOrchestrator()
+        orch.checkpoint_manager = cp_mgr
+
+        dev_configs = orch.get_department_configs("dept_dev")
+        dev1 = next(c for c in dev_configs if c.agent_id == "agent_dev_ui")
+        dev2 = next(c for c in dev_configs if c.agent_id == "agent_dev_core")
+
+        # Dev 1 on agy, Dev 2 on ollama with llama3.2:1b
+        self.assertEqual(dev1.cli_engine, "agy")
+        self.assertEqual(dev2.cli_engine, "ollama")
+        self.assertEqual(dev2.model, "llama3.2:1b")
+
+        # Media department check
+        video_configs = orch.get_department_configs("dept_video")
+        v_dev1 = next(c for c in video_configs if c.agent_id == "agent_video_motion")
+        v_dev2 = next(c for c in video_configs if c.agent_id == "agent_video_audio")
+        self.assertEqual(v_dev1.cli_engine, "agy")
+        self.assertEqual(v_dev2.cli_engine, "ollama")
+        self.assertEqual(v_dev2.model, "llama3.2:1b")
+
+        # 4. Test Orchestrator Resume from Checkpoint
+        self.assertTrue(orch.has_checkpoint())
+        self.assertEqual(orch.get_checkpoint_stage_name(), "Stage 2 (Development)")
+
+        resumed = orch.resume_from_checkpoint()
+        self.assertTrue(resumed)
+        self.assertEqual(orch._current_task, "Build multi-cli utility")
+        self.assertIn("agent_leader", orch.completed_stages)
+
+        # Stage 2 workers should be started, but not Stage 1 (agent_leader)
+        self.assertNotIn("agent_leader", orch.workers)
+        self.assertIn("agent_dev_core", orch.workers)
+
+        orch.stop_all()
+
+        # 5. Test MainWindow UI Checkpoint & Failover bindings
+        window = MainWindow(orch)
+
+        # Verify Resume Button is enabled and displays stage name
+        self.assertTrue(window.btn_resume.isEnabled())
+        self.assertIn("Stage 2 (Development)", window.btn_resume.text())
+
+        # Verify Failover Strategy Checkbox
+        self.assertTrue(hasattr(window, "chk_auto_failover"))
+        self.assertTrue(window.chk_auto_failover.isChecked())
+        self.assertTrue(orch.auto_failover_enabled)
+
+        # Toggle failover off and verify
+        window.chk_auto_failover.setChecked(False)
+        self.assertFalse(orch.auto_failover_enabled)
+
+        # Toggle failover back on
+        window.chk_auto_failover.setChecked(True)
+        self.assertTrue(orch.auto_failover_enabled)
+
+        # Simulate Failover Signal
+        orch.failover_forwarded.emit("agent_dev_ui", "agy", "ollama", "429 Rate Limit")
+        self.app.processEvents()
+        self.assertIn("Failover", window.lbl_status.text())
+
+        # Clear checkpoint and verify UI updates
+        cp_mgr.clear_checkpoint()
+        self.assertFalse(cp_mgr.has_valid_checkpoint())
+        window._update_resume_button()
+        self.assertFalse(window.btn_resume.isEnabled())
+        self.assertEqual(window.btn_resume.text(), "▶️ Resume")
+
+        window.close()
+        self.app.processEvents()
+
+        if os.path.exists(temp_cp_file):
+            os.remove(temp_cp_file)
+
 
 if __name__ == "__main__":
     unittest.main()
+
 
